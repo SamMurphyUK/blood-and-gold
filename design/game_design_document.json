@@ -1,0 +1,64 @@
+{
+  "title": "Blood and Gold",
+  "hook": "Manage gladiators for arena glory",
+  "game_overview": "Manage a stable of pixel-art gladiators, upgrade their equipment, and dispatch them to tactical arena skirmishes for gold and renown.",
+  "artstyle": "pixelated",
+  "genre": "rpg",
+  "winning_condition": "Accumulate 5,000 Glory and defeat the Emperor's Vanguard in the Grand Coliseum.",
+  "losing_condition": "All gladiators perish in battle and treasury falls below 50 gold with no recruits remaining.",
+  "player_mode": "single_player",
+  "supported_orientations": [
+    "landscape"
+  ],
+  "input_methods": [
+    "mouse",
+    "touch",
+    "keyboard"
+  ],
+  "score_options": {
+    "score_type": "points",
+    "score_order": "higher_is_better"
+  },
+  "low_end_device_support": true,
+  "mobile_playable": true,
+  "tv_playable": false,
+  "language": [
+    "en"
+  ],
+  "content_descriptors": [
+    "violence"
+  ],
+  "controls": [
+    {
+      "input": "Mouse Click / Tap",
+      "action": "Select gladiator, open management panels, and trigger combat decisions."
+    },
+    {
+      "input": "Key B",
+      "action": "Toggle the Battle Selection Board modal."
+    },
+    {
+      "input": "Key U",
+      "action": "Toggle the Gladiator Equipment and Upgrade modal."
+    },
+    {
+      "input": "Key R",
+      "action": "Open the Recruitment barracks modal."
+    },
+    {
+      "input": "Key Spacebar",
+      "action": "Pause or resume camp simulation time."
+    },
+    {
+      "input": "Virtual Touch Buttons",
+      "action": "On-screen touch overlays to access Battle Board, Upgrades, and Roster on mobile devices."
+    }
+  ],
+  "sections": [
+    {
+      "title": "Visual Hierarchy & Layering",
+      "content": "Visual styling draws inspiration from minimalist top-down sci-fi tactical aesthetics: ultra-clean chunky pixel outlines, high-contrast flat color blocks, desaturated functional hulls/camp tiles paired with vivid alert accents (amber, crimson, teal), and crisp tactical HUD gauges reminiscent of a starship crew interface adapted into an ancient ludus command deck.",
+      "summary": "Tactical clean low-fi pixel art, crisp tactical readouts, and functional schematic aesthetics."
+    }
+  ]
+}
