@@ -5,7 +5,7 @@
 // 3 distinct tonal layers (dark base shadow, cultural mid-tone skin, sharp warm torchlight highlights),
 // and heavy ink-black comic shadows (#0c070a) against a dark vignette backdrop.
 
-import type {Culture, GladiatorClass, NpcPortraitType, HeroType} from './src/types';
+import type {Culture, GladiatorClass, NpcPortraitType, HeroType} from '../types';
 
 export interface PortraitConfig {
   culture: Culture;
