@@ -2,8 +2,7 @@
 // Crusader Kings & Visual Novel style branching event chains with antiquity lore.
 // Strictly uses the 16-color antiquity palette, procedural NPC portraits, and dynamic consequence simulation.
 
-import { NpcPortraitType } from './portraits';
-import { Culture } from './portraits';
+import type { NpcPortraitType, Culture } from '../types';
 
 export type RequiredQuestStat = 'attack' | 'defense' | 'speed' | 'level' | 'none';
 

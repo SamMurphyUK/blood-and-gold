@@ -8,397 +8,49 @@
 // Crisp high-resolution vector UI & notifications overlay, preserving 16-color antiquity palette and character proportions.
 // tslint:disable
 /* eslint-disable */
-import {
-  Activity,
-  ArrowLeft,
-  Clock,
-  HelpCircle,
-  Menu,
-  Pause,
-  Play,
-  RotateCw,
-  Scroll,
-  Shield,
-  Sparkles,
-  Trophy,
-  Volume2,
-  VolumeX,
-  X,
-  Zap,
-} from 'lucide-react';
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {ArrowLeft, Clock, HelpCircle, Menu, Pause, Play, RotateCw, Scroll, Sparkles, Trophy, Volume2, VolumeX, X} from 'lucide-react';
+import React, {useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
 import {getConfig, PALETTE, PaletteColor, THEME} from './constants';
-import {
-  getPortraitDataUrl,
-  drawPortrait,
-  renderGladiatorHeadshot,
-  getGladiatorHeadshotDataUrl,
-  getNpcPortraitDataUrl,
-  drawAulusPortrait,
-  getAulusPortraitDataUrl,
-  NpcPortraitType,
-  HeroType,
-} from './portraits';
-import {
-  calculateGladiatorSuccessChance,
-  ActiveQuestExpedition,
-  QuestChoice,
-  QuestNode,
-  QUEST_CHAINS,
-  QUEST_DATABASE,
-  QuestReward,
-  QuestPenalty,
-} from './quests';
-import {
-  ActiveStoryState,
-  getStoryEventForGladiator,
-  INITIAL_STORY_STATE,
-  STORY_EVENTS,
-} from './storyEvents';
-import {
-  INTRO_MONOLOGUE_TEXT,
-  renderPhase1,
-  renderPhase2And3,
-  renderPhase4,
-  renderPhase5,
-  drawManagerVnPortrait,
-} from './cinematicIntro';
+import {getPortraitDataUrl, getNpcPortraitDataUrl, getAulusPortraitDataUrl} from './src/rendering/portraits';
+import {calculateGladiatorSuccessChance, ActiveQuestExpedition, QuestNode, QUEST_CHAINS, QUEST_DATABASE, QuestReward, QuestPenalty} from './src/data/quests';
+import {ActiveStoryState, getStoryEventForGladiator, INITIAL_STORY_STATE} from './src/data/storyEvents';
+import {INTRO_MONOLOGUE_TEXT} from './src/rendering/cinematicIntro';
 import {cinematicIntroMusic} from './cinematicIntroAudio';
 import BackgroundMusic from './utils/BackgroundMusic';
-import {
-  createFixedStepper,
-  gameAudio,
-  GameState,
-  MenuOverlay,
-  Overlay,
-  prepareCanvas,
-  useAutoFocus,
-  useIsMobile,
-} from './utils/helper';
+import {createFixedStepper, gameAudio, GameState, MenuOverlay, Overlay, useAutoFocus, useIsMobile} from './utils/helper';
 import {
   usePlayground,
   usePlaygroundGameLifecycle,
 } from './utils/usePlayground';
+import type {Culture, CombatTactics, WeaponDef, PhysicianNpcState, CampSpeechBubble, ArenaSpeechBubble, PersonalityTrait, GladiatorAttributes, PepTalkTone, LudusUpgrades, DynamicVisitor, VisitorWalkingNpcState, EtherealSpark, Gladiator, EnemyTemplate, SlashVFX, DevoteeState, BattleTier, CombatLogEntry, FloatingParticle, CrispPopup, Projectile, MemorialGrave, AftermathData, QuestResolutionModalState, CourierNpcState, CourierNoticeState, BattlefieldLootState, ArenaFighter, HeroArrivalModalState, SideEnemyDef, CampFeastState, FeastSlaveNpc, PepTalkEvaluation, TravelingMerchantState, TutorialStage, PostBattleTutorialStage, JudgmentState} from './src/types';
+import {WEAPON_DATABASE} from './src/data/weapons';
+import {TRAIT_DEFINITIONS} from './src/data/traits';
+import {BATTLE_TIERS, EMPEROR_DUEL_TIER, FORTIFIED_QUEST_TEMPLATES} from './src/data/battleTiers';
+import {INITIAL_GLADIATORS} from './src/data/gladiators';
+import {SAVE_KEY, SAVE_SCHEMA, bindRef, resetToInitial, restoreSave, serializeSave, type GladiatorQuestProgress, type SaveBindings} from './src/systems/saveSchema';
+import {HERO_LORE_TALES, HERO_BEASTMASTER, HERO_SALADIN, HERO_ZUZUBU} from './src/data/heroes';
+import {SIDE_FIGHTER_POOL} from './src/data/sideFighters';
+import {TUTORIAL_TEXT_TENT, TUTORIAL_TEXT_ARMORY, TUTORIAL_TEXT_WARNING, POST_BATTLE_TEXT_1, POST_BATTLE_TEXT_2, DUMMY_TEXT_1, DUMMY_TEXT_2, POST_BATTLE_TENT_TEXT} from './src/data/tutorial';
+import {renderFrame} from './src/rendering/renderFrame';
+import type {RenderView} from './src/rendering/view';
+import {getSafeNow} from './src/rendering/frameTime';
+import {getCrowdTier} from './src/rendering/arena/crowdTier';
+import {KEEPER_POST_FIFTH_PANELS} from './src/data/keeper';
+import {CULTURE_DESCRIPTIONS, CULTURE_LABELS} from './src/data/cultures';
+import {LOGIC_WIDTH, LOGIC_HEIGHT} from './src/rendering/primitives';
+import {recalculateGladiatorStats} from './src/logic/gladiatorStats';
+import {toRoman} from './src/logic/roman';
+import {getPodiumCountdownMultiplier, isSpecialNarrativeQuest} from './src/logic/tiers';
+import {updateWorld} from './src/systems/updateWorld';
+import {createEconomy} from './src/systems/economy';
+import {resolveBattle} from './src/systems/resolveBattle';
+import type {BattleView} from './src/systems/resolveBattle';
+import type {BattleOutcome} from './src/systems/view';
+import {createRoster} from './src/systems/roster';
+import {buildFighter} from './src/systems/buildFighter';
+import {useHudTick} from './src/systems/useHudTick';
+import type {UpdateView} from './src/systems/view';
 
-// --- Virtual Pixel Scaling Engine Constants ---
-// 4 virtual display pixels per 1 logic pixel (344x192 logic resolution)
-export const LOGIC_WIDTH = 344;
-export const LOGIC_HEIGHT = 192;
-export const PIXEL_SCALE = 4;
-
-// --- Cultural Heritage ---
-export type Culture = 'roman' | 'celt' | 'berber' | 'scythian' | 'hunnic';
-
-export const CULTURE_LABELS: Record<Culture, string> = {
-  roman: 'Roman Murmillo',
-  celt: 'Celtic Champion',
-  berber: 'Berber Skirmisher',
-  scythian: 'Scythian Lancer',
-  hunnic: 'Hunnic Raider',
-};
-
-export const CULTURE_DESCRIPTIONS: Record<Culture, string> = {
-  roman: 'Heavy bronze crested helmet, segmented lorica, Scutum tower shield & Gladius.',
-  celt: 'Golden torc, tribal woad war-paint, heavy spatha iron blade & painted round shield.',
-  berber: 'Desert linen headwrap, swift curved falcata blade & tempered bronze buckler.',
-  scythian: 'Pointed steppe leather cap, decorated tunic, long lance & composite recurve bow.',
-  hunnic: 'Fur-lined iron skullcap, layered lamellar armor plates & curved cavalry sabre.',
-};
-
-export type CombatTactics = 'aggressive' | 'defensive' | 'ranged';
-
-export type SlotType = 'RIGHT' | 'LEFT' | 'BOTH';
-
-export interface WeaponDef {
-  id: string;
-  name: string;
-  slotType: SlotType;
-  tier: 1 | 2 | 3;
-  cost: number;
-  atkBonus: number;
-  defBonus: number;
-  spdBonus: number;
-  critBonus?: number; // e.g. 0.05 for +5% Crit
-  pinBonus?: number;  // e.g. 0.15 for +15% Pin/Control chance
-  description: string;
-  icon: string;
-  isExotic?: boolean; // Traveling Nomad Merchant exclusive Caravan Bazaar item
-  isRanged?: boolean;
-  isThrowingTrident?: boolean;
-}
-
-export const WEAPON_DATABASE: Record<string, WeaponDef> = {
-  // RIGHT (Offensive)
-  gladius: {
-    id: 'gladius',
-    name: 'Gladius',
-    slotType: 'RIGHT',
-    tier: 1,
-    cost: 80,
-    atkBonus: 6,
-    defBonus: 0,
-    spdBonus: 0,
-    description: 'Standard double-edged Roman short sword for close-quarters thrusting.',
-    icon: '🗡️',
-  },
-  hunting_sling: {
-    id: 'hunting_sling',
-    name: 'Hunting Sling',
-    slotType: 'RIGHT',
-    tier: 1,
-    cost: 95,
-    atkBonus: 8,
-    defBonus: 0,
-    spdBonus: 4,
-    isRanged: true,
-    description: 'Braided leather sling hurling rapid stone projectiles with blunt impact ping (Range 160px).',
-    icon: '🪨',
-  },
-  sica: {
-    id: 'sica',
-    name: 'Sica',
-    slotType: 'RIGHT',
-    tier: 2,
-    cost: 220,
-    atkBonus: 14,
-    defBonus: 0,
-    spdBonus: 0,
-    critBonus: 0.05,
-    description: 'Curved Thracian falchion blade designed to hook around enemy shields (+5% Crit).',
-    icon: '⚔️',
-  },
-  celtic_longsword: {
-    id: 'celtic_longsword',
-    name: 'Celtic Longsword',
-    slotType: 'RIGHT',
-    tier: 2,
-    cost: 260,
-    atkBonus: 18,
-    defBonus: 0,
-    spdBonus: 2,
-    description: 'Broad Gallic spatha delivering sweeping horizontal slash arcs (+18 ATK, +8% SPD).',
-    icon: '⚔️',
-  },
-  fuscina: {
-    id: 'fuscina',
-    name: 'Fuscina / Trident',
-    slotType: 'RIGHT',
-    tier: 3,
-    cost: 480,
-    atkBonus: 24,
-    defBonus: 0,
-    spdBonus: 0,
-    critBonus: 0.10,
-    description: 'Three-pronged barbed masterwork trident for punishing reach and lethal strikes (+10% Crit).',
-    icon: '🔱',
-  },
-  throwing_trident: {
-    id: 'throwing_trident',
-    name: 'Throwing Trident (Fuscina de Venator)',
-    slotType: 'RIGHT',
-    tier: 3,
-    cost: 520,
-    atkBonus: 45,
-    defBonus: 0,
-    spdBonus: 0,
-    critBonus: 0.12,
-    isThrowingTrident: true,
-    description: 'Thrown ONCE at first engagement for massive piercing damage (+45 DMG, pierces 2 foes). Falls back to bare fists!',
-    icon: '🔱',
-  },
-
-  // LEFT (Defensive / Utility)
-  parmula: {
-    id: 'parmula',
-    name: 'Parmula',
-    slotType: 'LEFT',
-    tier: 1,
-    cost: 75,
-    atkBonus: 0,
-    defBonus: 6,
-    spdBonus: 4,
-    description: 'Light rounded bronze buckler providing nimble mobility and reliable deflection.',
-    icon: '🛡️',
-  },
-  scutum: {
-    id: 'scutum',
-    name: 'Scutum',
-    slotType: 'LEFT',
-    tier: 2,
-    cost: 210,
-    atkBonus: 0,
-    defBonus: 16,
-    spdBonus: 0,
-    description: 'Heavy curved legionary tower shield offering tremendous protection against blows.',
-    icon: '🛡️',
-  },
-  rete: {
-    id: 'rete',
-    name: 'Rete',
-    slotType: 'LEFT',
-    tier: 3,
-    cost: 450,
-    atkBonus: 0,
-    defBonus: 10,
-    spdBonus: 0,
-    pinBonus: 0.15,
-    description: 'Weighted combat entanglement net to ensnare foes (+15% Pin/Control chance).',
-    icon: '🕸️',
-  },
-
-  // BOTH (Powerful Two-Handed)
-  barbarian_greatclub: {
-    id: 'barbarian_greatclub',
-    name: 'Barbarian Greatclub',
-    slotType: 'BOTH',
-    tier: 1,
-    cost: 140,
-    atkBonus: 16,
-    defBonus: 2,
-    spdBonus: -2,
-    pinBonus: 0.20,
-    description: 'Massive spiked oak war club dealing heavy blunt impact with 20% stagger and knockback.',
-    icon: '🪵',
-  },
-  spiculum: {
-    id: 'spiculum',
-    name: 'Spiculum',
-    slotType: 'BOTH',
-    tier: 1,
-    cost: 180,
-    atkBonus: 12,
-    defBonus: 4,
-    spdBonus: 0,
-    description: 'Heavy war spear with steel ferrule, combining thrusting power and guard reach.',
-    icon: '🥢',
-  },
-  gastraphetes: {
-    id: 'gastraphetes',
-    name: 'Roman Repeating Gastraphetes',
-    slotType: 'BOTH',
-    tier: 2,
-    cost: 320,
-    atkBonus: 22,
-    defBonus: 2,
-    spdBonus: -2,
-    isRanged: true,
-    description: 'Mechanical Roman crossbow firing high-velocity bolts from distance with penetrating force.',
-    icon: '🏹',
-  },
-  heavy_falx: {
-    id: 'heavy_falx',
-    name: 'Heavy Falx',
-    slotType: 'BOTH',
-    tier: 2,
-    cost: 380,
-    atkBonus: 28,
-    defBonus: 0,
-    spdBonus: -4,
-    description: 'Brutal two-handed Dacian curved cleaver that hacks through armor with savage force.',
-    icon: '🪓',
-  },
-  imperial_rhomphaia: {
-    id: 'imperial_rhomphaia',
-    name: 'Imperial Rhomphaia',
-    slotType: 'BOTH',
-    tier: 3,
-    cost: 750,
-    atkBonus: 42,
-    defBonus: 0,
-    spdBonus: 0,
-    description: 'Devastating masterwork two-handed greatblade crafted for emperors and high champions.',
-    icon: '🗡️',
-  },
-
-  // EXOTIC WARES (Caravan Bazaar Nomad Weapons - Merchant Exclusives)
-  damascene_spatha: {
-    id: 'damascene_spatha',
-    name: 'Damascene Spatha',
-    slotType: 'RIGHT',
-    tier: 3,
-    cost: 620,
-    atkBonus: 32,
-    defBonus: 0,
-    spdBonus: 2,
-    critBonus: 0.12,
-    isExotic: true,
-    description: 'Forged from folded crucible steel with mesmerizing water-markings (+12% Crit).',
-    icon: '🗡️',
-  },
-  obsidian_kopis: {
-    id: 'obsidian_kopis',
-    name: 'Obsidian Kopis',
-    slotType: 'RIGHT',
-    tier: 3,
-    cost: 720,
-    atkBonus: 36,
-    defBonus: 0,
-    spdBonus: 0,
-    critBonus: 0.15,
-    isExotic: true,
-    description: 'Vicious forward-curving blade inlaid with razor obsidian shards (+15% Crit).',
-    icon: '⚔️',
-  },
-  gilded_tower_aegis: {
-    id: 'gilded_tower_aegis',
-    name: 'Gilded Tower Aegis',
-    slotType: 'LEFT',
-    tier: 3,
-    cost: 650,
-    atkBonus: 0,
-    defBonus: 24,
-    spdBonus: 2,
-    pinBonus: 0.20,
-    isExotic: true,
-    description: 'Gold-leaf reinforced legionary bulwark offering unrivaled protection and shield bashes (+20% Pin).',
-    icon: '🛡️',
-  },
-  spiked_caestus: {
-    id: 'spiked_caestus',
-    name: 'Spiked Caestus',
-    slotType: 'RIGHT',
-    tier: 3,
-    cost: 580,
-    atkBonus: 28,
-    defBonus: 4,
-    spdBonus: 6,
-    critBonus: 0.10,
-    pinBonus: 0.25,
-    isExotic: true,
-    description: 'Iron-studded leather combat wraps allowing blindingly fast strikes and grapple control (+25% Pin, +10% Crit).',
-    icon: '🥊',
-  },
-  imperial_dragon_standard: {
-    id: 'imperial_dragon_standard',
-    name: 'Imperial Dragon Standard',
-    slotType: 'BOTH',
-    tier: 3,
-    cost: 980,
-    atkBonus: 48,
-    defBonus: 12,
-    spdBonus: 0,
-    critBonus: 0.15,
-    pinBonus: 0.20,
-    isExotic: true,
-    description: 'Legendary two-handed imperial standard crowned with a gilded draco totem (+15% Crit, +20% Pin).',
-    icon: '🚩',
-  },
-};
-
-export interface PhysicianNpcState {
-  active: boolean;
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  timer: number; // 40 seconds
-  healTickTimer: number; // ticks every 1.0s
-  speechTimer: number; // speech every 6-8s
-  didHumorCheck: boolean; // 5-10% rare chance once per visit
-  flipX: boolean;
-  animTimer: number;
-  state: 'entering' | 'roaming' | 'departing';
-}
 
 export const INITIAL_PHYSICIAN_STATE: PhysicianNpcState = {
   active: false,
@@ -415,120 +67,6 @@ export const INITIAL_PHYSICIAN_STATE: PhysicianNpcState = {
   state: 'entering',
 };
 
-export interface CampSpeechBubble {
-  id: string;
-  gladiatorId: string;
-  speakerName: string;
-  text: string;
-  timer: number;
-  maxDuration: number;
-}
-
-export interface ArenaSpeechBubble {
-  id: string;
-  fighterId: string;
-  speakerName: string;
-  text: string;
-  timer: number;
-  maxDuration: number;
-}
-
-export type WeightClass = 'Lightweight' | 'Cruiserweight' | 'Heavyweight' | 'Colossal';
-export type GladiatorClass =
-  | 'Murmillo'
-  | 'Retiarius'
-  | 'Bestiarius'
-  | 'Dimachaerus'
-  | 'Thracian'
-  | 'Legionary'
-  | 'Rebel'
-  | 'War Horse'
-  | 'War Elephant';
-export type PersonalityTrait =
-  | 'Proud'
-  | 'Scarred Veteran'
-  | 'Crowd Pleaser'
-  | 'Claustrophobic'
-  | 'Bloodthirsty'
-  | 'Resilient'
-  | 'Insecure'
-  | 'Mad';
-
-export interface TraitDefinition {
-  name: PersonalityTrait;
-  title: string;
-  effect: string;
-  flavor: string;
-  color?: string;
-  badgeBg?: string;
-}
-
-export const TRAIT_DEFINITIONS: Record<PersonalityTrait, TraitDefinition> = {
-  'Proud': {
-    name: 'Proud',
-    title: 'Proud',
-    effect: 'Despises being mocked; gains +20% morale & resolve from honorable inspiration.',
-    flavor: 'Highborn heritage and stubborn pride. Will never submit easily to humiliation.',
-    color: '#cb9f6b',
-    badgeBg: '#3f3126',
-  },
-  'Scarred Veteran': {
-    name: 'Scarred Veteran',
-    title: 'Scarred Veteran',
-    effect: 'Immune to panic and fear checks in combat; +15% resistance to stagger.',
-    flavor: 'Carries the deep gashes of twenty arena seasons; unfazed by the sight of severed limbs.',
-    color: '#ded095',
-    badgeBg: '#3f363b',
-  },
-  'Crowd Pleaser': {
-    name: 'Crowd Pleaser',
-    title: 'Crowd Pleaser',
-    effect: 'Generates +25% extra gold and renown on dramatic finishing blows.',
-    flavor: 'Plays to the roaring bleachers with theatrical flourish and dramatic execution.',
-    color: '#fbbf24',
-    badgeBg: '#42341d',
-  },
-  'Claustrophobic': {
-    name: 'Claustrophobic',
-    title: 'Claustrophobic',
-    effect: 'Panics in tight clusters; gains +10% movement speed and agility when flanking in open sand.',
-    flavor: 'Yearns for open sky and wide steppe horizons; despises crowded choke points.',
-    color: '#88997a',
-    badgeBg: '#2a3328',
-  },
-  'Bloodthirsty': {
-    name: 'Bloodthirsty',
-    title: 'Bloodthirsty',
-    effect: 'Enters a feral berserk frenzy (+15% Crit) when any enemy falls below 20% HP.',
-    flavor: 'The scent of spilled blood awakens a savage battle joy that cannot be reasoned with.',
-    color: '#ba7654',
-    badgeBg: '#44221d',
-  },
-  'Resilient': {
-    name: 'Resilient',
-    title: 'Resilient',
-    effect: 'Recovers +25% faster from fatigue and pins; +10% natural damage reduction when wounded.',
-    flavor: 'Dense bone and forged sinew. Shrugs off bruises that would fell lesser men.',
-    color: '#55796f',
-    badgeBg: '#223531',
-  },
-  'Insecure': {
-    name: 'Insecure',
-    title: 'Insecure',
-    effect: 'Vulnerable to harsh mockery (-15% DEF); flourishes under patient mentorship (+15% ATK).',
-    flavor: 'Haunted by fear of failure under the glaring eyes of the Roman crowd.',
-    color: '#a4968d',
-    badgeBg: '#342e30',
-  },
-  'Mad': {
-    name: 'Mad',
-    title: 'Mad',
-    effect: 'Erratic decision-making in the arena; hallucinates lights beneath the sand; +15% unpredictable damage variance.',
-    flavor: 'The mind fractured under relentless psychological strain. Listens to the dirt singing.',
-    color: '#9e4a42',
-    badgeBg: '#381c20',
-  },
-};
 
 /** Interactive stone beveled trait tooltip badge */
 export function TraitBadge({
@@ -604,134 +142,6 @@ export function TraitBadge({
   );
 }
 
-export interface GladiatorAttributes {
-  str: number; // Strength: scales melee attack damage (~20% range)
-  dex: number; // Dexterity: scales attack speed, cooldown recovery & agility (~20% range)
-  vit: number; // Vitality: scales maximum HP (~20% range)
-  wil: number; // Morale / resolve / recovery
-  con?: number; // legacy alias for vit
-}
-
-export type PepTalkTone = 'INSPIRE' | 'MOCK' | 'THREATEN';
-
-export interface LudusUpgrades {
-  trainingGrounds: number; // 0, 1, 2, 3
-  medicalBay: number;      // 0, 1, 2, 3
-  breedingPens: number;    // 0, 1, 2
-}
-
-export interface DynamicVisitor {
-  id: string;
-  type: 'merchant' | 'scout' | 'patron' | 'rival';
-  name: string;
-  title: string;
-  greeting: string;
-  offerText: string;
-  cost?: number;
-  reward?: number;
-  rewardText?: string;
-  attributeBoost?: { type: keyof GladiatorAttributes; val: number; name: string };
-  scoutRecruit?: Gladiator;
-  timer: number;
-}
-
-export interface VisitorWalkingNpcState {
-  active: boolean;
-  visitor: DynamicVisitor;
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  state: 'walking' | 'pausing_at_tent' | 'entering_tent';
-  pauseTimer: number;
-  speechText: string;
-  hasSpoken: boolean;
-  animTimer: number;
-  flipX: boolean;
-  walkTimer: number;
-}
-
-export interface EtherealSpark {
-  x: number;
-  y: number;
-  timer: number;
-  maxDuration: number;
-}
-
-export interface Gladiator {
-  id: string;
-  name: string;
-  culture: Culture;
-  title: string;
-  level: number;
-  xp: number;
-  xpNeeded: number;
-  hp: number;
-  maxHp: number;
-  attack: number;
-  defense: number;
-  speed: number;
-  baseAttack: number;
-  baseDefense: number;
-  baseSpeed: number;
-  weaponLevel: number;
-  armorLevel: number;
-  kills: number;
-  tactics: CombatTactics;
-  status: 'Available' | 'On Quest' | 'In Arena' | 'Retired / Breeding';
-  equipped: { rightHand: string | null; leftHand: string | null };
-  justEquipped?: boolean;
-  equipParticleTimer?: number;
-  // Spatial Camp Roaming State (in logic pixels)
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  state: 'idle' | 'walking' | 'sparring' | 'resting' | 'sitting';
-  targetActivity?: 'idle' | 'walking' | 'sparring' | 'resting' | 'sitting';
-  isSitting?: boolean;
-  isOnQuest?: boolean;
-  sparHitTimer?: number;
-  actionTimer: number;
-  animTimer: number;
-  flipX: boolean;
-  // Sitting cooldown & seated duration timers to prevent rapid toggling / flickering
-  sitCooldown?: number;
-  seatedDuration?: number;
-  // Legendary Unique Hero Archetype ('beastmaster' | 'saladin' | 'zuzubu')
-  heroType?: 'beastmaster' | 'saladin' | 'zuzubu';
-  isCavalry?: boolean;
-  isElephant?: boolean;
-  // Quest Departure & Return Walk Animations
-  questWalkState?: 'departing' | 'returning' | 'none';
-  questWalkTimer?: number;
-  questWalkTotal?: number;
-  hidden?: boolean;
-  // New Recruits Walk-In Entrance
-  isWalkingIn?: boolean;
-
-  // Progression & Attributes Expansion
-  attributes?: GladiatorAttributes;
-  weightClass?: WeightClass;
-  gladiatorClass?: GladiatorClass;
-  archetype?: string;
-  traits?: PersonalityTrait[];
-  pepTalkStatus?: 'Inspire' | 'Rage' | 'Resolve' | 'Rattled' | 'Hesitant' | 'Resentful' | 'Petulant' | 'Panic' | 'Reckless' | 'None';
-  pepTalkThreatened?: boolean;
-  inspireCount?: number;
-  heritageTitle?: string;
-  generation?: number;
-
-  // Ghost Flash Investigation & Madness
-  investigatingFlash?: {
-    clickCount: number;
-    flashX: number;
-    flashY: number;
-    arrived: boolean;
-  };
-  madTwitchTimer?: number;
-}
-
 export function rollNpcEquipment(
   level: number,
   culture?: Culture,
@@ -776,154 +186,6 @@ export function rollNpcEquipment(
   return { rightHand: null, leftHand: null };
 }
 
-export function recalculateGladiatorStats(glad: Gladiator): Gladiator {
-  const attrs = glad.attributes || { str: 10, dex: 10, vit: 10, con: 10, wil: 10 };
-  const str = attrs.str ?? 10;
-  const dex = attrs.dex ?? 10;
-  const vit = attrs.vit ?? attrs.con ?? 10;
-
-  // Bounded ~20% attribute scaling:
-  // e.g. base modifier: 1 + (stat - 10) * 0.02. Across typical stat variance 5 to 15, modifier spans 0.90 to 1.10 (a ~20% range)
-  const strMod = Math.max(0.85, Math.min(1.25, 1 + (str - 10) * 0.02));
-  const dexMod = Math.max(0.85, Math.min(1.25, 1 + (dex - 10) * 0.02));
-  const vitMod = Math.max(0.85, Math.min(1.25, 1 + (vit - 10) * 0.02));
-
-  // STR directly scales melee attack power (~20% difference)
-  let atk = Math.max(1, Math.round(glad.baseAttack * strMod));
-  let def = glad.baseDefense;
-  // DEX directly scales attack rate & speed (~20% difference)
-  let spd = Math.max(1, Math.round(glad.baseSpeed * dexMod));
-  // VIT directly scales maximum health points pool (~20% difference)
-  const rawBaseHp = 135 + (glad.level || 1) * 15;
-  let maxHp = Math.max(80, Math.round(rawBaseHp * vitMod));
-
-  // Weight class modifiers
-  if (glad.weightClass === 'Lightweight') {
-    spd += 3;
-    atk += 1;
-    maxHp = Math.max(80, maxHp - 20);
-  } else if (glad.weightClass === 'Heavyweight') {
-    spd = Math.max(5, spd - 3);
-    def += 3;
-    atk += 3;
-    maxHp += 30;
-  } else if (glad.weightClass === 'Colossal') {
-    spd = Math.max(4, spd - 5);
-    def += 8;
-    atk += 6;
-    maxHp += 80;
-  }
-
-  const rightW = glad.equipped.rightHand ? WEAPON_DATABASE[glad.equipped.rightHand] : null;
-  const leftW = glad.equipped.leftHand ? WEAPON_DATABASE[glad.equipped.leftHand] : null;
-
-  if (rightW && rightW.slotType === 'BOTH') {
-    atk += rightW.atkBonus;
-    def += rightW.defBonus;
-    spd += rightW.spdBonus;
-  } else {
-    if (rightW) {
-      atk += rightW.atkBonus;
-      def += rightW.defBonus;
-      spd += rightW.spdBonus;
-    }
-    if (leftW) {
-      atk += leftW.atkBonus;
-      def += leftW.defBonus;
-      spd += leftW.spdBonus;
-    }
-  }
-
-  // Pep talk status modifiers (reduced by 50% for tactical balance, with backfire risks)
-  if (glad.pepTalkStatus === 'Inspire') {
-    atk = Math.round(atk * 1.08);
-    def = Math.round(def * 1.08);
-  } else if (glad.pepTalkStatus === 'Petulant') {
-    // Backfire: Proud gladiator petulant scorn / distraction
-    spd = Math.max(4, Math.round(spd * 0.92));
-  } else if (glad.pepTalkStatus === 'Panic') {
-    // Backfire: Threatened resentful panic
-    def = Math.max(0, Math.round(def * 0.90));
-    spd = Math.max(4, Math.round(spd * 0.90));
-  } else if (glad.pepTalkStatus === 'Reckless') {
-    // Backfire: Bloodlust reckless aggression (+15% dmg dealt, takes +15% more damage / -15% DEF)
-    atk = Math.round(atk * 1.15);
-    def = Math.max(0, Math.round(def * 0.85));
-  } else if (glad.pepTalkStatus === 'Rage') {
-    atk = Math.round(atk * 1.08);
-  } else if (glad.pepTalkStatus === 'Resolve') {
-    def = Math.round(def * 1.08);
-  } else if (glad.pepTalkStatus === 'Rattled') {
-    def = Math.max(0, Math.round(def * 0.92));
-  } else if (glad.pepTalkStatus === 'Hesitant') {
-    spd = Math.max(4, Math.round(spd * 0.95));
-  }
-
-  if (glad.pepTalkThreatened) {
-    atk = Math.round(atk * 1.15);
-  }
-
-  return {
-    ...glad,
-    attributes: {
-      str,
-      dex,
-      vit,
-      con: vit,
-      wil: attrs.wil ?? 10,
-    },
-    maxHp: Math.max(80, maxHp),
-    hp: Math.min(Math.max(1, glad.hp), Math.max(80, maxHp)),
-    attack: Math.max(1, atk),
-    defense: Math.max(0, def),
-    speed: Math.max(1, spd),
-  };
-}
-
-export interface EnemyTemplate {
-  name: string;
-  culture: Culture;
-  title: string;
-  hp: number;
-  attack: number;
-  defense: number;
-  speed: number;
-  tactics: CombatTactics;
-  isCavalry?: boolean;
-  isElephant?: boolean;
-  equipped?: { rightHand: string | null; leftHand: string | null };
-}
-
-export type ArenaMapTheme =
-  | 'standard'
-  | 'rome_flames'
-  | 'river_rubicon'
-  | 'alpine_rampart'
-  | 'gallic_crossing'
-  | 'camp_defense';
-
-export interface SlashVFX {
-  id: string;
-  x: number;
-  y: number;
-  angle: number;
-  framesLeft: number;
-  isClash: boolean;
-}
-
-export interface DevoteeState {
-  active: boolean;
-  state: 'entering' | 'cheering' | 'leaving';
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  battlesLeft: number;
-  hasGiftedGold: boolean;
-  animTimer: number;
-  flipX: boolean;
-  speechTimer: number;
-}
 
 export const INITIAL_DEVOTEE_STATE: DevoteeState = {
   active: false,
@@ -939,190 +201,8 @@ export const INITIAL_DEVOTEE_STATE: DevoteeState = {
   speechTimer: 0,
 };
 
-export function isSpecialNarrativeQuest(tier: BattleTier | null): boolean {
-  if (!tier) return false;
-  return (
-    tier.id.startsWith('sandbox_uprising') ||
-    tier.id.startsWith('fortified_') ||
-    tier.isFortifiedQuest === true ||
-    tier.mapTheme === 'rome_flames' ||
-    tier.mapTheme === 'river_rubicon' ||
-    tier.mapTheme === 'alpine_rampart' ||
-    tier.mapTheme === 'gallic_crossing'
-  );
-}
-
-export interface ArenaFortification {
-  type: 'river' | 'low_wall';
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface BattleTier {
-  id: string;
-  name: string;
-  difficulty: string;
-  goldReward: number;
-  description: string;
-  isBoss?: boolean;
-  enemies: EnemyTemplate[];
-  cooldownBattles?: number;
-  mapTheme?: ArenaMapTheme;
-  fortifications?: ArenaFortification[];
-  isFortifiedQuest?: boolean;
-  heroReward?: 'beastmaster' | 'saladin' | 'zuzubu';
-  isPodiumTrial?: boolean;
-  hasHeraldBribeOption?: boolean;
-}
-
-export interface CombatLogEntry {
-  id: string;
-  timeStr: string;
-  text: string;
-  tone: 'player' | 'enemy' | 'neutral' | 'crit' | 'pin';
-}
-
-export interface FloatingParticle {
-  x: number;
-  y: number;
-  color: PaletteColor;
-  vx: number;
-  vy: number;
-  life: number;
-  maxLife: number;
-  size?: number;
-  isBlood?: boolean;
-}
-
-export interface CrispPopup {
-  id: string;
-  logicX: number;
-  logicY: number;
-  text: string;
-  color: string;
-  life: number;
-  maxLife: number;
-  isCrit?: boolean;
-  isFatal?: boolean;
-}
-
-export interface Projectile {
-  id: string;
-  ownerId: string;
-  isPlayerTeam: boolean;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  damage: number;
-  isCrit: boolean;
-  life: number;
-  maxLife: number;
-  culture: Culture;
-  isStone?: boolean;
-  isBolt?: boolean;
-  isPiercingTrident?: boolean;
-  pierceCount?: number;
-  hitFighterIds?: string[];
-}
-
-export interface BondShiftRecord {
-  pairKey: string;
-  glad1Name: string;
-  glad2Name: string;
-  delta: number;
-  newScore: number;
-  reason: string;
-}
-
-export interface MemorialGrave {
-  id: string;
-  gladiatorId: string;
-  name: string;
-  culture: Culture;
-  title: string;
-  battlesWon: number;
-  epitaph: string;
-  slotIndex: number;
-  x: number;
-  y: number;
-}
-
 // Escalate fee: 200G -> 400G -> 600G -> 1200G
 export const RESPITE_COST_SCHEDULE = [200, 400, 600, 1200] as const;
-
-export const INITIAL_MEMORIAL_GRAVES: MemorialGrave[] = [
-  {
-    id: 'grave_ancient_founder',
-    gladiatorId: 'ancient_founder',
-    name: 'Aulus the Primus',
-    culture: 'roman',
-    title: 'Honored Founder',
-    battlesWon: 16,
-    epitaph: 'Hic iacet fortis. In aeternum decus legionis.',
-    slotIndex: 0,
-    x: 42,
-    y: 174,
-  },
-];
-
-export interface PartyMemberPostBattle {
-  id: string;
-  name: string;
-  culture: Culture;
-  title: string;
-  startLevel: number;
-  endLevel: number;
-  startXp: number;
-  endXp: number;
-  xpNeeded: number;
-  xpGained: number;
-  startBondPips: number;
-  endBondPips: number;
-  didLevelUp: boolean;
-  hpRemaining: number;
-  maxHp: number;
-  heroType?: HeroType;
-  gladiatorClass?: GladiatorClass;
-  statGains?: { str: number; dex: number; vit: number };
-  newStats?: { str: number; dex: number; vit: number };
-}
-
-export interface AftermathData {
-  isVictory: boolean;
-  isTrial: boolean; // true if official Coliseum Trial, false if side skirmish
-  tierName: string;
-  goldEarned: number;
-  narratives: string[];
-  bondShifts: BondShiftRecord[];
-  partyMembers: PartyMemberPostBattle[];
-}
-
-export function toRoman(num: number): string {
-  if (!num || num <= 0 || isNaN(num)) return 'I';
-  const lookup: [number, string][] = [
-    [100, 'C'],
-    [90, 'XC'],
-    [50, 'L'],
-    [40, 'XL'],
-    [10, 'X'],
-    [9, 'IX'],
-    [5, 'V'],
-    [4, 'IV'],
-    [1, 'I'],
-  ];
-  let roman = '';
-  let n = Math.floor(num);
-  for (const [val, letter] of lookup) {
-    while (n >= val) {
-      roman += letter;
-      n -= val;
-    }
-  }
-  return roman || 'I';
-}
 
 function sumQuestAmount(base?: number, extra?: number): number | undefined {
   const sum = (base || 0) + (extra || 0);
@@ -1150,33 +230,6 @@ function mergeQuestPenalties(base?: QuestPenalty, extra?: QuestPenalty): QuestPe
   return {gold, damage, killed};
 }
 
-export interface QuestResolutionModalState {
-  node: QuestNode;
-  glad: Gladiator;
-  isSuccess: boolean;
-  roll: number;
-  chance: number;
-  choice: QuestChoice;
-  outcomeNode?: QuestNode;
-  rewards?: QuestReward;
-  penalty?: QuestPenalty;
-}
-
-export interface CourierNpcState {
-  active: boolean;
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  state: 'walking' | 'at_tent' | 'departing';
-  speechTimer: number;
-  speechText: string;
-  walkTimer: number;
-  animTimer: number;
-  flipX: boolean;
-  hasPlayedHorn: boolean;
-}
-
 export const INITIAL_COURIER_STATE: CourierNpcState = {
   active: false,
   x: 165,
@@ -1192,20 +245,6 @@ export const INITIAL_COURIER_STATE: CourierNpcState = {
   hasPlayedHorn: false,
 };
 
-export interface CourierNoticeState {
-  chainId: string;
-  speaker: string;
-  title: string;
-  nodeId: string;
-}
-
-export interface BattlefieldLootState {
-  enemyName: string;
-  item: WeaponDef;
-  targetGladId: string;
-  targetGladName: string;
-}
-
 export function formatWeaponStats(w: WeaponDef): string {
   const parts: string[] = [];
   if (w.atkBonus > 0) parts.push(`+${w.atkBonus} ATK`);
@@ -1216,805 +255,6 @@ export function formatWeaponStats(w: WeaponDef): string {
   return parts.length > 0 ? parts.join(', ') : 'Standard Quality';
 }
 
-export interface ArenaFighter {
-  id: string;
-  sourceGladiatorId?: string;
-  isPlayerTeam: boolean;
-  name: string;
-  culture: Culture;
-  title: string;
-  level: number;
-  hp: number;
-  maxHp: number;
-  stamina: number;
-  maxStamina: number;
-  attack: number;
-  defense: number;
-  speed: number;
-  tactics: CombatTactics;
-  equipped?: { rightHand: string | null; leftHand: string | null };
-  critBonus?: number;
-  pinBonus?: number;
-  isCavalry?: boolean;
-  isElephant?: boolean;
-  isEmperor?: boolean;
-  isDead?: boolean;
-  heroType?: 'beastmaster' | 'saladin' | 'zuzubu';
-  zuzubuThrownSpear?: boolean;
-  saladinAuraTimer?: number;
-  elephantChargeCooldown?: number;
-  isCharging?: boolean;
-  hasCavalryHit?: boolean;
-  chargeTimer?: number;
-  chargeVx?: number;
-  chargeVy?: number;
-  stunTimer?: number;
-  consecutiveMissilesTaken?: number;
-  moraleRallyTimer?: number;
-  blindDistractTimer?: number;
-  pepTalkStatus?: 'Inspire' | 'Rage' | 'Resolve' | 'Rattled' | 'Hesitant' | 'Resentful' | 'Petulant' | 'Panic' | 'Reckless' | 'None';
-  pepTalkThreatened?: boolean;
-  attributes?: GladiatorAttributes;
-  weightClass?: WeightClass;
-  gladiatorClass?: GladiatorClass;
-  traits?: PersonalityTrait[];
-  madTwitchTimer?: number;
-  consecutiveMisses?: number;
-  repositionTimer?: number;
-  stationaryDuelTimer?: number;
-
-  // Real-time arena physics coordinates (logic pixels)
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  flipX: boolean;
-
-  // State machine
-  state: 'idle' | 'walking' | 'attack' | 'hurt' | 'pinned' | 'pinning' | 'death';
-  animTimer: number;
-  attackCooldown: number;
-  tacticsTimer: number;
-  isBaiting: boolean;
-
-  // Pin / Grapple mechanic
-  pinnedTimer: number;
-  pinCooldown: number;
-  pinnedTargetId?: string;
-  pinnedByFighterId?: string;
-  hasThrownTrident?: boolean;
-
-  // Dramatic Finishing Blow / Death sequence
-  deathTimer: number;
-  flashWhiteTimer: number;
-  rageTimer: number;
-}
-
-// Initial 5 Cultural Champions of the Ludus
-export const INITIAL_GLADIATORS: Gladiator[] = [
-  {
-    id: 'glad_roman',
-    name: 'Valerius Iron-Wall',
-    culture: 'roman',
-    title: 'Murmillo Veteran',
-    level: 1,
-    xp: 0,
-    xpNeeded: 100,
-    hp: 175,
-    maxHp: 175,
-    attack: 22,
-    defense: 15,
-    speed: 10,
-    baseAttack: 22,
-    baseDefense: 15,
-    baseSpeed: 10,
-    weaponLevel: 1,
-    armorLevel: 1,
-    kills: 0,
-    tactics: 'defensive',
-    status: 'Available',
-    equipped: { rightHand: null, leftHand: null },
-    attributes: { str: 14, dex: 10, vit: 16, con: 16, wil: 13 },
-    weightClass: 'Cruiserweight',
-    gladiatorClass: 'Murmillo',
-    traits: ['Scarred Veteran', 'Proud'],
-    x: 100,
-    y: 116,
-    targetX: 100,
-    targetY: 116,
-    state: 'idle',
-    targetActivity: 'idle',
-    actionTimer: 2.0,
-    animTimer: 0,
-    flipX: false,
-  },
-  {
-    id: 'glad_celt',
-    name: 'Brennus the Unbroken',
-    culture: 'celt',
-    title: 'Gallic Berserker',
-    level: 1,
-    xp: 0,
-    xpNeeded: 100,
-    hp: 155,
-    maxHp: 155,
-    attack: 25,
-    defense: 11,
-    speed: 13,
-    baseAttack: 25,
-    baseDefense: 11,
-    baseSpeed: 13,
-    weaponLevel: 1,
-    armorLevel: 1,
-    kills: 0,
-    tactics: 'aggressive',
-    status: 'Available',
-    equipped: { rightHand: null, leftHand: null },
-    attributes: { str: 16, dex: 12, vit: 14, con: 14, wil: 14 },
-    weightClass: 'Heavyweight',
-    gladiatorClass: 'Dimachaerus',
-    traits: ['Bloodthirsty', 'Crowd Pleaser'],
-    x: 140,
-    y: 128,
-    targetX: 140,
-    targetY: 128,
-    state: 'idle',
-    targetActivity: 'idle',
-    actionTimer: 3.2,
-    animTimer: 0.4,
-    flipX: false,
-  },
-  {
-    id: 'glad_berber',
-    name: 'Tariq Desert-Wind',
-    culture: 'berber',
-    title: 'Numidian Skirmisher',
-    level: 1,
-    xp: 0,
-    xpNeeded: 100,
-    hp: 140,
-    maxHp: 140,
-    attack: 23,
-    defense: 9,
-    speed: 16,
-    baseAttack: 23,
-    baseDefense: 9,
-    baseSpeed: 16,
-    weaponLevel: 1,
-    armorLevel: 1,
-    kills: 0,
-    tactics: 'ranged',
-    status: 'Available',
-    equipped: { rightHand: null, leftHand: null },
-    attributes: { str: 11, dex: 17, vit: 10, con: 10, wil: 13 },
-    weightClass: 'Lightweight',
-    gladiatorClass: 'Retiarius',
-    traits: ['Resilient', 'Crowd Pleaser'],
-    x: 165,
-    y: 145,
-    targetX: 165,
-    targetY: 145,
-    state: 'idle',
-    targetActivity: 'idle',
-    actionTimer: 2.5,
-    animTimer: 0.8,
-    flipX: true,
-  },
-  {
-    id: 'glad_scythian',
-    name: 'Aria Steppe-Rider',
-    culture: 'scythian',
-    title: 'Scythian Lancer',
-    level: 1,
-    xp: 0,
-    xpNeeded: 100,
-    hp: 145,
-    maxHp: 145,
-    attack: 26,
-    defense: 12,
-    speed: 14,
-    baseAttack: 26,
-    baseDefense: 12,
-    baseSpeed: 14,
-    weaponLevel: 1,
-    armorLevel: 1,
-    kills: 0,
-    tactics: 'ranged',
-    status: 'Available',
-    equipped: { rightHand: null, leftHand: null },
-    attributes: { str: 13, dex: 16, vit: 12, con: 12, wil: 15 },
-    weightClass: 'Lightweight',
-    gladiatorClass: 'Bestiarius',
-    traits: ['Proud', 'Claustrophobic'],
-    x: 195,
-    y: 120,
-    targetX: 195,
-    targetY: 120,
-    state: 'idle',
-    targetActivity: 'idle',
-    actionTimer: 1.8,
-    animTimer: 1.2,
-    flipX: true,
-  },
-  {
-    id: 'glad_hunnic',
-    name: 'Attila Blood-Fang',
-    culture: 'hunnic',
-    title: 'Hunnic Raider',
-    level: 1,
-    xp: 0,
-    xpNeeded: 100,
-    hp: 150,
-    maxHp: 150,
-    attack: 24,
-    defense: 13,
-    speed: 12,
-    baseAttack: 24,
-    baseDefense: 13,
-    baseSpeed: 12,
-    weaponLevel: 1,
-    armorLevel: 1,
-    kills: 0,
-    tactics: 'aggressive',
-    status: 'Available',
-    equipped: { rightHand: null, leftHand: null },
-    attributes: { str: 15, dex: 13, vit: 15, con: 15, wil: 13 },
-    weightClass: 'Heavyweight',
-    gladiatorClass: 'Murmillo',
-    traits: ['Bloodthirsty', 'Scarred Veteran'],
-    x: 125,
-    y: 155,
-    targetX: 125,
-    targetY: 155,
-    state: 'idle',
-    targetActivity: 'idle',
-    actionTimer: 2.8,
-    animTimer: 0.2,
-    flipX: false,
-  },
-];
-
-export function getPodiumCountdownMultiplier(tierIdx: number): number {
-  if (tierIdx <= 1) return 1.0;
-  if (tierIdx === 2) return 1.3; // Tier 3: 30% longer countdown
-  if (tierIdx === 3) return 1.5; // Tier 4: 50% longer countdown
-  return 1.6; // Tier 5: 60% longer countdown
-}
-
-// Battle Tiers featuring Multi-Fighter Squad Combat across 5 Escalating Coliseum Tiers (20% reduced gold rewards)
-export const BATTLE_TIERS: BattleTier[] = [
-  {
-    id: 'tier_1',
-    name: 'Tier I: Pit Skirmishers',
-    difficulty: 'Novice',
-    goldReward: 104,
-    description: 'Novice brawlers and savage skirmishers test your squad in the blood-soaked pit.',
-    enemies: [
-      {
-        name: 'Numidian Pit Brawler',
-        culture: 'berber',
-        title: 'Pit Fighter',
-        hp: 110,
-        attack: 18,
-        defense: 7,
-        speed: 12,
-        tactics: 'aggressive',
-      },
-      {
-        name: 'Gallic Pit Striker',
-        culture: 'celt',
-        title: 'Desert Slinger',
-        hp: 100,
-        attack: 19,
-        defense: 6,
-        speed: 14,
-        tactics: 'ranged',
-      },
-    ],
-  },
-  {
-    id: 'tier_2',
-    name: 'Tier II: Arena Centurions',
-    difficulty: 'Challenging',
-    goldReward: 208,
-    description: 'Disciplined arena centurions combine heavy shield walls with flanking cavalry tactics.',
-    enemies: [
-      {
-        name: 'Arena Centurion Guard',
-        culture: 'roman',
-        title: 'Centurion Enforcer',
-        hp: 150,
-        attack: 23,
-        defense: 15,
-        speed: 11,
-        tactics: 'defensive',
-      },
-      {
-        name: 'Hunnic Steppe Vanguard',
-        culture: 'hunnic',
-        title: 'Mounted Raider Dismounted',
-        hp: 140,
-        attack: 25,
-        defense: 11,
-        speed: 13,
-        tactics: 'aggressive',
-      },
-    ],
-  },
-  {
-    id: 'tier_3',
-    name: 'Tier III: Equites Cavalry & Provocatores',
-    difficulty: 'Fierce',
-    goldReward: 400,
-    description: 'An elite squad combining armored cavalry shock charges, heavy provocator bulwarks, and beastmasters.',
-    enemies: [
-      {
-        name: 'Roman Provocator Veteran',
-        culture: 'roman',
-        title: 'Provocator Bulwark',
-        hp: 200,
-        attack: 24,
-        defense: 17,
-        speed: 10,
-        tactics: 'defensive',
-      },
-      {
-        name: 'Imperial Equites Outrider',
-        culture: 'roman',
-        title: 'Armored Cavalry Lancer',
-        hp: 190,
-        attack: 28,
-        defense: 12,
-        speed: 22,
-        tactics: 'aggressive',
-        isCavalry: true,
-      },
-      {
-        name: 'Steppe Cavalry Lancer',
-        culture: 'hunnic',
-        title: 'Mounted Steppe Raider',
-        hp: 180,
-        attack: 26,
-        defense: 11,
-        speed: 21,
-        tactics: 'aggressive',
-        isCavalry: true,
-      },
-      {
-        name: 'Numidian Beastmaster',
-        culture: 'berber',
-        title: 'Swift Lion-Trainer',
-        hp: 150,
-        attack: 26,
-        defense: 9,
-        speed: 17,
-        tactics: 'ranged',
-      },
-    ],
-  },
-  {
-    id: 'tier_4',
-    name: 'Tier IV: Praetorian Guard & War Elephant',
-    difficulty: 'Brutal',
-    goldReward: 680,
-    description: 'The Emperor’s praetorian elite flanked by royal cavalry outriders and a colossal Carthaginian War Elephant!',
-    enemies: [
-      {
-        name: 'Carthaginian Armored War Elephant',
-        culture: 'berber',
-        title: 'Colossal War Elephant',
-        hp: 380,
-        attack: 32,
-        defense: 20,
-        speed: 7,
-        tactics: 'aggressive',
-        isElephant: true,
-      },
-      {
-        name: 'Imperial Praetorian Tribune',
-        culture: 'roman',
-        title: 'Praetorian Guard',
-        hp: 240,
-        attack: 32,
-        defense: 19,
-        speed: 12,
-        tactics: 'defensive',
-      },
-      {
-        name: 'Imperial Praetorian Equites',
-        culture: 'roman',
-        title: 'Praetorian Cavalry Lancer',
-        hp: 210,
-        attack: 30,
-        defense: 14,
-        speed: 22,
-        tactics: 'aggressive',
-        isCavalry: true,
-      },
-      {
-        name: 'Scythian Royal Mounted Lancer',
-        culture: 'scythian',
-        title: 'Imperial Steppe Cavalry',
-        hp: 190,
-        attack: 31,
-        defense: 12,
-        speed: 22,
-        tactics: 'ranged',
-        isCavalry: true,
-      },
-    ],
-  },
-  {
-    id: 'tier_5',
-    name: 'Tier V: The Grand Coliseum Champion (Boss Battle!)',
-    difficulty: 'Legendary',
-    goldReward: 1440,
-    description: 'The undefeated Supreme Coliseum Champion flanked by elite imperial cavalry and a towering Carthaginian War Elephant!',
-    isBoss: true,
-    enemies: [
-      {
-        name: 'Imperial Coliseum Champion',
-        culture: 'roman',
-        title: 'Supreme Coliseum Champion',
-        hp: 400,
-        attack: 38,
-        defense: 22,
-        speed: 13,
-        tactics: 'defensive',
-      },
-      {
-        name: 'Carthaginian Armored War Elephant',
-        culture: 'berber',
-        title: 'Colossal War Elephant',
-        hp: 420,
-        attack: 35,
-        defense: 22,
-        speed: 8,
-        tactics: 'aggressive',
-        isElephant: true,
-      },
-      {
-        name: 'Imperial Guard Equites Decurion',
-        culture: 'roman',
-        title: 'Elite Imperial Cavalry',
-        hp: 240,
-        attack: 34,
-        defense: 15,
-        speed: 22,
-        tactics: 'aggressive',
-        isCavalry: true,
-      },
-      {
-        name: 'Royal Steppe Cataphract',
-        culture: 'hunnic',
-        title: 'Armored Cavalry Cataphract',
-        hp: 230,
-        attack: 34,
-        defense: 16,
-        speed: 21,
-        tactics: 'aggressive',
-        isCavalry: true,
-      },
-    ],
-  },
-];
-
-export const EMPEROR_DUEL_TIER: BattleTier = {
-  id: 'tier_emperor',
-  name: 'Imperial Duel: Emperor Aurelius',
-  difficulty: 'Legendary Boss',
-  goldReward: 2000,
-  description: 'A 1-on-1 clash against Emperor Aurelius in gilded lorica squamata armor upon the arena sands.',
-  isBoss: true,
-  enemies: [
-    {
-      name: 'Emperor Aurelius',
-      culture: 'roman',
-      title: 'The Gilded Tyrant (Lvl V)',
-      hp: 520,
-      attack: 42,
-      defense: 25,
-      speed: 13,
-      tactics: 'aggressive',
-      equipped: { rightHand: 'damascene_spatha', leftHand: 'gilded_tower_aegis' },
-    },
-  ],
-};
-
-// ============================================================================
-// LEGENDARY UNIQUE HEROES (REWARDS WITH DISTINCT SPRITES, PORTRAITS & LORE)
-// ============================================================================
-export const HERO_LORE_TALES: Record<'beastmaster' | 'saladin' | 'zuzubu', { speaker: string; title: string; tale: string }> = {
-  beastmaster: {
-    speaker: 'Numitor the Beastmaster',
-    title: 'Lord of Beasts',
-    tale: "I was once the Emperor's imperial kennel master, forced to pit wild beasts against starving men. You tore open the cages and gave me purpose. In your arena, the wild herds of Numidia and the war elephants of Carthage will answer your horn!",
-  },
-  saladin: {
-    speaker: 'Saladin the Medic',
-    title: 'Master Physician',
-    tale: "I wandered across the eastern trade routes seeking herbs to cure the dying while Rome waged endless war. You offered shelter to a healer when others only sought executioners. As long as I draw breath, your champions will never succumb to their wounds.",
-  },
-  zuzubu: {
-    speaker: 'Zuzubu',
-    title: 'The Obsidian Leopard',
-    tale: "My clan was betrayed on the southern dunes, chained and sold to Roman slave markets. But I saw how you fight with honor alongside your brethren. Hand me my spear and twin blades—I will bleed Rome dry, or die in fury beside you!",
-  },
-};
-
-export const KEEPER_POST_FIFTH_PANELS = [
-  "I hear now the emperor is mad with grief.",
-  "He... is out for blood. But Rome, too, is out of sorts.",
-  "Slaves. Freemen. The difference is little.",
-] as const;
-
-export interface HeroArrivalModalState {
-  hero: Gladiator;
-  speaker: string;
-  title: string;
-  tale: string;
-  charCount: number;
-  charTimer: number;
-  isDone: boolean;
-}
-
-export const HERO_BEASTMASTER: Gladiator = {
-  id: 'hero_beastmaster',
-  name: 'Numitor the Beastmaster',
-  culture: 'berber',
-  title: 'Lord of Beasts',
-  level: 3,
-  xp: 0,
-  xpNeeded: 225,
-  hp: 180,
-  maxHp: 180,
-  attack: 24,
-  defense: 14,
-  speed: 13,
-  baseAttack: 24,
-  baseDefense: 14,
-  baseSpeed: 13,
-  weaponLevel: 2,
-  armorLevel: 2,
-  kills: 4,
-  tactics: 'aggressive',
-  status: 'Available',
-  heroType: 'beastmaster',
-  equipped: { rightHand: null, leftHand: null },
-  attributes: { str: 15, dex: 13, vit: 15, con: 15, wil: 14 },
-  traits: ['Resilient', 'Scarred Veteran'],
-  x: 135,
-  y: 120,
-  targetX: 135,
-  targetY: 120,
-  state: 'idle',
-  targetActivity: 'idle',
-  actionTimer: 2.0,
-  animTimer: 0,
-  flipX: false,
-};
-
-export const HERO_SALADIN: Gladiator = {
-  id: 'hero_saladin',
-  name: 'Saladin the Medic',
-  culture: 'berber',
-  title: 'Master Physician',
-  level: 3,
-  xp: 0,
-  xpNeeded: 225,
-  hp: 150,
-  maxHp: 150,
-  attack: 16,
-  defense: 13,
-  speed: 11,
-  baseAttack: 16,
-  baseDefense: 13,
-  baseSpeed: 11,
-  weaponLevel: 2,
-  armorLevel: 2,
-  kills: 2,
-  tactics: 'defensive',
-  status: 'Available',
-  heroType: 'saladin',
-  equipped: { rightHand: null, leftHand: null },
-  attributes: { str: 10, dex: 11, vit: 13, con: 13, wil: 16 },
-  traits: ['Resilient', 'Proud'],
-  x: 155,
-  y: 125,
-  targetX: 155,
-  targetY: 125,
-  state: 'idle',
-  targetActivity: 'idle',
-  actionTimer: 2.0,
-  animTimer: 0,
-  flipX: false,
-};
-
-export const HERO_ZUZUBU: Gladiator = {
-  id: 'hero_zuzubu',
-  name: 'Zuzubu',
-  culture: 'berber',
-  title: 'The Obsidian Leopard',
-  level: 4,
-  xp: 0,
-  xpNeeded: 340,
-  hp: 135,
-  maxHp: 135,
-  attack: 38,
-  defense: 8,
-  speed: 25,
-  baseAttack: 38,
-  baseDefense: 8,
-  baseSpeed: 25,
-  weaponLevel: 3,
-  armorLevel: 1,
-  kills: 6,
-  tactics: 'aggressive',
-  status: 'Available',
-  heroType: 'zuzubu',
-  equipped: { rightHand: null, leftHand: null },
-  attributes: { str: 17, dex: 18, vit: 11, con: 11, wil: 15 },
-  traits: ['Bloodthirsty', 'Claustrophobic'],
-  x: 175,
-  y: 130,
-  targetX: 175,
-  targetY: 130,
-  state: 'idle',
-  targetActivity: 'idle',
-  actionTimer: 2.0,
-  animTimer: 0,
-  flipX: false,
-};
-
-// ============================================================================
-// RARE FORTIFIED SIDEQUESTS (DEFENSIVE FORTIFICATIONS & THEMATIC MAPS)
-// ============================================================================
-export const FORTIFIED_QUEST_TEMPLATES: BattleTier[] = [
-  {
-    id: 'fortified_rubicon',
-    name: 'River Rubicon Ambush',
-    difficulty: 'Fierce',
-    goldReward: 384,
-    description: 'A treacherous crossing across the Rubicon. River water slows infantry by 50%, while cavalry & elephants cross without penalty! Triumph awards the BEASTMASTER.',
-    mapTheme: 'river_rubicon',
-    isFortifiedQuest: true,
-    heroReward: 'beastmaster',
-    fortifications: [
-      { type: 'river', x: 148, y: 60, w: 44, h: 124 },
-    ],
-    enemies: [
-      {
-        name: 'Gallic River Raider',
-        culture: 'celt',
-        title: 'River Vanguard (Lvl III)',
-        hp: 180,
-        attack: 26,
-        defense: 12,
-        speed: 12,
-        tactics: 'defensive',
-      },
-      {
-        name: 'Gallic Noble Cavalry',
-        culture: 'celt',
-        title: 'Mounted River Lancer (Lvl III)',
-        hp: 190,
-        attack: 28,
-        defense: 13,
-        speed: 22,
-        tactics: 'aggressive',
-        isCavalry: true,
-      },
-      {
-        name: 'Berber Dune Slinger',
-        culture: 'berber',
-        title: 'Riverbank Slinger (Lvl III)',
-        hp: 150,
-        attack: 24,
-        defense: 10,
-        speed: 16,
-        tactics: 'ranged',
-      },
-    ],
-  },
-  {
-    id: 'fortified_alpine',
-    name: 'Alpine Fortified Rampart',
-    difficulty: 'Brutal',
-    goldReward: 448,
-    description: 'Disciplined mountain cohorts hold crenelated stone barricades. Low stone walls provide 40% cover to deflect incoming blows! Triumph awards SALADIN THE MEDIC.',
-    mapTheme: 'alpine_rampart',
-    isFortifiedQuest: true,
-    heroReward: 'saladin',
-    fortifications: [
-      { type: 'low_wall', x: 180, y: 76, w: 12, h: 42 },
-      { type: 'low_wall', x: 180, y: 132, w: 12, h: 40 },
-    ],
-    enemies: [
-      {
-        name: 'Alpine Cohort Tribune',
-        culture: 'roman',
-        title: 'Wall Guard Tribune (Lvl IV)',
-        hp: 240,
-        attack: 30,
-        defense: 22,
-        speed: 9,
-        tactics: 'defensive',
-        equipped: { rightHand: 'gladius', leftHand: 'scutum' },
-      },
-      {
-        name: 'Roman Wall Provocator',
-        culture: 'roman',
-        title: 'Barricade Provocator (Lvl III)',
-        hp: 210,
-        attack: 26,
-        defense: 18,
-        speed: 10,
-        tactics: 'defensive',
-        equipped: { rightHand: 'sica', leftHand: 'scutum' },
-      },
-      {
-        name: 'Imperial Gastraphetes Crossbow',
-        culture: 'roman',
-        title: 'Wall Marksman (Lvl III)',
-        hp: 160,
-        attack: 28,
-        defense: 11,
-        speed: 11,
-        tactics: 'ranged',
-        equipped: { rightHand: 'gastraphetes', leftHand: 'gastraphetes' },
-      },
-    ],
-  },
-  {
-    id: 'fortified_gallic',
-    name: 'Gallic River Crossing',
-    difficulty: 'Brutal',
-    goldReward: 512,
-    description: 'A contested crossing combining rushing river water and low stone barricades. Enemies hold ground behind fortifications! Triumph awards ZUZUBU.',
-    mapTheme: 'gallic_crossing',
-    isFortifiedQuest: true,
-    heroReward: 'zuzubu',
-    fortifications: [
-      { type: 'river', x: 132, y: 60, w: 32, h: 124 },
-      { type: 'low_wall', x: 182, y: 84, w: 12, h: 36 },
-      { type: 'low_wall', x: 182, y: 130, w: 12, h: 38 },
-    ],
-    enemies: [
-      {
-        name: 'Thracian Falx Reaver',
-        culture: 'celt',
-        title: 'Barricade Cleaver (Lvl IV)',
-        hp: 230,
-        attack: 34,
-        defense: 14,
-        speed: 13,
-        tactics: 'defensive',
-        equipped: { rightHand: 'heavy_falx', leftHand: 'heavy_falx' },
-      },
-      {
-        name: 'Steppe Cataphract Cavalry',
-        culture: 'hunnic',
-        title: 'Mounted Crossing Lancer (Lvl IV)',
-        hp: 220,
-        attack: 32,
-        defense: 15,
-        speed: 21,
-        tactics: 'aggressive',
-        isCavalry: true,
-      },
-      {
-        name: 'Scythian Composite Archer',
-        culture: 'scythian',
-        title: 'River Guard Archer (Lvl IV)',
-        hp: 170,
-        attack: 29,
-        defense: 12,
-        speed: 15,
-        tactics: 'ranged',
-      },
-    ],
-  },
-];
 
 export function getMaxSquadSizeForTier(tierIndex: number): number {
   if (tierIndex <= 1) return 2;
@@ -2024,43 +264,6 @@ export function getMaxSquadSizeForTier(tierIndex: number): number {
 // ============================================================================
 // DITHERING & CANVAS RENDERING HELPERS (PRESERVING ART-SNAPSHOT-V1)
 // ============================================================================
-
-export interface SideEnemyDef {
-  name: string;
-  culture: Culture;
-  title: string;
-  tactics: CombatTactics;
-  category: 'Renegade Thracians' | 'Pit Brawlers' | 'Deserter Legionaries' | 'Desert Nomads' | 'Wild Beasts & Handlers' | 'Mounted Outriders';
-  isCavalry?: boolean;
-  isElephant?: boolean;
-}
-
-export const SIDE_FIGHTER_POOL: SideEnemyDef[] = [
-  { name: 'Renegade Thracian Sica-Bearer', culture: 'celt', title: 'Renegade Duelist', tactics: 'aggressive', category: 'Renegade Thracians' },
-  { name: 'Thracian Falx Cleaver', culture: 'celt', title: 'Two-Handed Reaver', tactics: 'aggressive', category: 'Renegade Thracians' },
-  { name: 'Outlaw Thraex Vanguard', culture: 'celt', title: 'Outlaw Pit Striker', tactics: 'aggressive', category: 'Renegade Thracians' },
-  { name: 'Unchained Pit Brawler', culture: 'roman', title: 'Caestus Bruiser', tactics: 'aggressive', category: 'Pit Brawlers' },
-  { name: 'Subterranean Pit Mauler', culture: 'hunnic', title: 'Bare-Knuckle Enforcer', tactics: 'aggressive', category: 'Pit Brawlers' },
-  { name: 'Scarred Arena Heavyweight', culture: 'roman', title: 'Underground Veteran', tactics: 'defensive', category: 'Pit Brawlers' },
-  { name: 'Deserter Hastatus', culture: 'roman', title: 'Shield-Wall Defector', tactics: 'defensive', category: 'Deserter Legionaries' },
-  { name: 'Mutinous Legion Veteran', culture: 'roman', title: 'Disciplined Outcast', tactics: 'defensive', category: 'Deserter Legionaries' },
-  { name: 'Turncoat Centurion', culture: 'roman', title: 'Rogue Formation Leader', tactics: 'defensive', category: 'Deserter Legionaries' },
-  { name: 'Numidian Sling Scout', culture: 'berber', title: 'Dune Skirmisher', tactics: 'ranged', category: 'Desert Nomads' },
-  { name: 'Berber Sand-Stalker', culture: 'berber', title: 'Swift Falcata Raider', tactics: 'aggressive', category: 'Desert Nomads' },
-  { name: 'Bedouin Desert Raider', culture: 'berber', title: 'Desert Archer', tactics: 'ranged', category: 'Desert Nomads' },
-  { name: 'Scythian Steppe Outlaw', culture: 'scythian', title: 'Composite Recurve Lancer', tactics: 'ranged', category: 'Desert Nomads' },
-  { name: 'Arena Beastmaster', culture: 'berber', title: 'Savage Lion-Handler', tactics: 'ranged', category: 'Wild Beasts & Handlers' },
-  { name: 'Pit Mastiff Handler', culture: 'celt', title: 'War-Hound Breeder', tactics: 'aggressive', category: 'Wild Beasts & Handlers' },
-  { name: 'Iberian Wolf Wrangler', culture: 'scythian', title: 'Predator Wrangler', tactics: 'defensive', category: 'Wild Beasts & Handlers' },
-  // CAVALRY UNITS IN SIDE SKIRMISH POOL (Higher appearance rate)
-  { name: 'Imperial Equites Deserter', culture: 'roman', title: 'Renegade Cavalry Lancer', tactics: 'aggressive', category: 'Mounted Outriders', isCavalry: true },
-  { name: 'Steppe Cavalry Raider', culture: 'hunnic', title: 'Mounted Steppe Outrider', tactics: 'aggressive', category: 'Mounted Outriders', isCavalry: true },
-  { name: 'Numidian Cavalry Scout', culture: 'berber', title: 'Desert Outrider', tactics: 'aggressive', category: 'Mounted Outriders', isCavalry: true },
-  { name: 'Gallic Noble Cavalry', culture: 'celt', title: 'Mounted Gallic Lancer', tactics: 'aggressive', category: 'Mounted Outriders', isCavalry: true },
-  { name: 'Scythian Outrider Lancer', culture: 'scythian', title: 'Mounted Steppe Lancer', tactics: 'aggressive', category: 'Mounted Outriders', isCavalry: true },
-  // COLOSSAL ENEMY ARCHETYPE: WAR ELEPHANT
-  { name: 'Carthaginian War Elephant', culture: 'berber', title: 'Armored War Beast', tactics: 'aggressive', category: 'Wild Beasts & Handlers', isElephant: true },
-];
 
 // MARKER_BEFORE_GENERATE
 export function generateSideSkirmishes(podiumTier = 1, forceFortified = false, currentGladiators: Gladiator[] = []): BattleTier[] {
@@ -2275,397 +478,6 @@ export function generateSideSkirmishes(podiumTier = 1, forceFortified = false, c
   return standardBounties;
 }
 
-// Soft Ambient Bloom for Camp Night Light Sources (Replacing hard dithered rings)
-export function drawSoftAmbientBloom(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  baseRadius: number,
-  animTime: number,
-  intensity = 1.0,
-  phaseOffset = 0,
-) {
-  if (!Number.isFinite(cx) || !Number.isFinite(cy) || !Number.isFinite(baseRadius)) return;
-
-  // Very slow harmonic breathing cycle (~3.5 seconds per breath cycle)
-  const breathFreq = (2 * Math.PI) / 3.5;
-  const breath = Math.sin(animTime * breathFreq + phaseOffset);
-  // Animate the bloom radius softly expanding and contracting by ~10%
-  const radius = Math.max(1, baseRadius * (1 + 0.10 * breath));
-
-  ctx.save();
-  // Multi-stop radial gradient / smooth layered glow using warm antiquity tones: #f5d69b, #d99c52, #ba7654
-  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-  // Core brightest around the flame
-  grad.addColorStop(0, `rgba(245, 214, 155, ${Math.min(1, 0.48 * intensity)})`);
-  // Warm amber mid-glow
-  grad.addColorStop(0.35, `rgba(217, 156, 82, ${Math.min(1, 0.28 * intensity)})`);
-  // Terracotta ambient attenuation
-  grad.addColorStop(0.70, `rgba(186, 118, 84, ${Math.min(1, 0.12 * intensity)})`);
-  // Soft ambient falloff to zero
-  grad.addColorStop(1, 'rgba(186, 118, 84, 0)');
-
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Subtle concentrated inner core glow
-  const innerRadius = Math.max(1, radius * 0.4);
-  const innerGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, innerRadius);
-  innerGrad.addColorStop(0, `rgba(245, 214, 155, ${Math.min(1, 0.35 * intensity)})`);
-  innerGrad.addColorStop(1, 'rgba(217, 156, 82, 0)');
-  ctx.fillStyle = innerGrad;
-  ctx.beginPath();
-  ctx.arc(cx, cy, innerRadius, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.restore();
-}
-
-// Continuous, smooth 3-second Day/Night interpolated gradient transition
-export function getSmoothDayNightTint(cTime: number): { r: number; g: number; b: number; a: number; isNight: boolean } {
-  const normTime = ((cTime % 120) + 120) % 120;
-  const lerp = (a: number, b: number, t: number) => a + (b - a) * Math.max(0, Math.min(1, t));
-
-  // Dawn: (225, 140, 115, 0.14)
-  // Day:  (255, 235, 190, 0.0)
-  // Dusk: (235, 135, 45, 0.18)
-  // Night: (16, 20, 32, 0.54)
-
-  if (normTime >= 0 && normTime < 18) {
-    return { r: 225, g: 140, b: 115, a: 0.14, isNight: false };
-  } else if (normTime >= 18 && normTime < 21) {
-    // 3-second transition: Dawn -> Day
-    const t = (normTime - 18) / 3;
-    return {
-      r: Math.round(lerp(225, 255, t)),
-      g: Math.round(lerp(140, 235, t)),
-      b: Math.round(lerp(115, 190, t)),
-      a: lerp(0.14, 0.0, t),
-      isNight: false,
-    };
-  } else if (normTime >= 21 && normTime < 65) {
-    return { r: 255, g: 235, b: 190, a: 0.0, isNight: false };
-  } else if (normTime >= 65 && normTime < 68) {
-    // 3-second transition: Day -> Dusk
-    const t = (normTime - 65) / 3;
-    return {
-      r: Math.round(lerp(255, 235, t)),
-      g: Math.round(lerp(235, 135, t)),
-      b: Math.round(lerp(190, 45, t)),
-      a: lerp(0.0, 0.18, t),
-      isNight: false,
-    };
-  } else if (normTime >= 68 && normTime < 78) {
-    return { r: 235, g: 135, b: 45, a: 0.18, isNight: false };
-  } else if (normTime >= 78 && normTime < 81) {
-    // 3-second transition: Dusk -> Night
-    const t = (normTime - 78) / 3;
-    return {
-      r: Math.round(lerp(235, 16, t)),
-      g: Math.round(lerp(135, 20, t)),
-      b: Math.round(lerp(45, 32, t)),
-      a: lerp(0.18, 0.54, t),
-      isNight: t > 0.5,
-    };
-  } else if (normTime >= 81 && normTime < 117) {
-    return { r: 16, g: 20, b: 32, a: 0.54, isNight: true };
-  } else {
-    // 3-second transition: Night -> Dawn (117 to 120)
-    const t = (normTime - 117) / 3;
-    return {
-      r: Math.round(lerp(16, 225, t)),
-      g: Math.round(lerp(20, 140, t)),
-      b: Math.round(lerp(32, 115, t)),
-      a: lerp(0.54, 0.14, t),
-      isNight: t < 0.5,
-    };
-  }
-}
-
-// Feast Dynamic Banter Lines specific to Culture, Personality Traits, and Camaraderie
-export const FEAST_BANTER_BY_CULTURE: Record<Culture, string[]> = {
-  roman: [
-    'Three podiums broken. Even Rome whispers of our sand.',
-    'Raise your cups! The legion bows to our brotherhood tonight.',
-    'No centurion ever feasted on Falernian wine this sweet!',
-  ],
-  celt: [
-    'Drink deep! The blood of our foes bought this wine tonight!',
-    'By the ancient oak, roasted boar tastes sweeter after battle!',
-    'To the fallen and to our iron blades! Pour more wine!',
-  ],
-  berber: [
-    'In the south, we celebrate survival with song. Pass the roast!',
-    'The desert winds never tasted wine this sweet.',
-    'A warrior who conquers the arena drinks like an emperor tonight!',
-  ],
-  scythian: [
-    'My horse may be gone, but my brothers stand beside me.',
-    'We drink to the fallen, and to the sands we conquered.',
-    'The steppe night has nothing on this fire and meat!',
-  ],
-  hunnic: [
-    'Tonight we feast like warlords! Tomorrow we break more shields!',
-    'Empty the amphora! We conquered three pedestals of blood!',
-    'No master can hold our spirits when the roast is carved!',
-  ],
-};
-
-export const FEAST_BANTER_BY_TRAIT: Record<PersonalityTrait, string[]> = {
-  'Proud': [
-    'The crowds learned who the true masters of the pit are.',
-    'Three pedestals beneath our sandals. We are untouchable!',
-  ],
-  'Scarred Veteran': [
-    'Twenty seasons in the sand, and this is the finest Falernian I have tasted.',
-    'Scars heal fast when the meat is hot and the brotherhood is unbroken.',
-  ],
-  'Crowd Pleaser': [
-    'Did you hear the roar of the bleachers? They will sing of us for generations!',
-    'A toast to the spectators who showered us with coin and glory!',
-  ],
-  'Claustrophobic': [
-    'Under this open night sky, with full flagons, I breathe free!',
-    'No cage can hold us when our brothers sit beside us.',
-  ],
-  'Bloodthirsty': [
-    'A feast of meat and red wine... almost as sweet as victory.',
-    'Their shields shattered like pottery. Drink to the slaughter!',
-  ],
-  'Resilient': [
-    'My bones still ache from their lances, but good wine mends all wounds.',
-    'We took their fiercest blows and we are still here to drink their wine!',
-  ],
-  'Insecure': [
-    'I feared I would falter, but you stood by me. Thank you, brothers.',
-    'Together... we survived three podiums.',
-  ],
-  'Mad': [
-    'THE WINE SINGS WITH THE DIRT! HAHAHA! PASS THE ROAST!',
-    'Do you see the fire dancing on our cups? Glorious!',
-  ],
-};
-
-export interface CampFeastState {
-  active: boolean;
-  timer: number;
-  totalDuration: number;
-  tableAlpha: number;
-  banterTimer: number;
-  unlocked: boolean;
-}
-
-export interface FeastSlaveNpc {
-  id: string;
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  flipX: boolean;
-  state: 'entering' | 'serving' | 'departing';
-  platterItem: 'roast' | 'wine' | 'bread';
-}
-
-// Procedural Banquet Table with Roast Meats, Falernian Wine, and Multi-Candle Ambient Lighting
-export function drawFeastTable(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  alpha: number,
-  animTime: number,
-) {
-  if (alpha <= 0.01) return;
-  ctx.save();
-  ctx.globalAlpha = Math.min(1, Math.max(0, alpha));
-
-  // Table ground shadow
-  drawDitherShadow(ctx, cx, cy + 10, 32, 6, PALETTE[5]);
-
-  // Wooden banquet table base & legs (#7f644b, #574b50)
-  ctx.fillStyle = '#7f644b';
-  ctx.fillRect(cx - 28, cy - 6, 56, 14);
-  // Legs
-  ctx.fillStyle = '#574b50';
-  ctx.fillRect(cx - 26, cy + 8, 4, 6);
-  ctx.fillRect(cx - 14, cy + 8, 3, 5);
-  ctx.fillRect(cx + 11, cy + 8, 3, 5);
-  ctx.fillRect(cx + 22, cy + 8, 4, 6);
-
-  // Tablecloth runner (cream linen #ded095 with imperial crimson #9e4a42 border)
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(cx - 27, cy - 6, 54, 12);
-  ctx.fillStyle = '#9e4a42';
-  ctx.fillRect(cx - 27, cy + 5, 54, 2);
-  ctx.fillRect(cx - 27, cy - 6, 54, 1);
-
-  // Platters of roast meats & bread loaves
-  // Roast suckling pig / roast meats platter in center
-  ctx.fillStyle = '#9c8053'; // bronze platter
-  ctx.fillRect(cx - 8, cy - 3, 16, 6);
-  ctx.fillStyle = '#ba7654'; // roast meat
-  ctx.fillRect(cx - 6, cy - 4, 12, 5);
-  ctx.fillStyle = '#7f644b'; // browned crust
-  ctx.fillRect(cx - 4, cy - 4, 8, 2);
-
-  // Bread basket / loaves on left
-  ctx.fillStyle = '#cb9f6b';
-  ctx.fillRect(cx - 22, cy - 2, 8, 4);
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(cx - 20, cy - 3, 5, 2);
-
-  // Grapes & figs on right
-  ctx.fillStyle = '#55796f';
-  ctx.fillRect(cx + 12, cy - 2, 7, 4);
-  ctx.fillStyle = '#6d3947';
-  ctx.fillRect(cx + 13, cy - 3, 4, 2);
-
-  // Falernian Wine Amphorae jars
-  ctx.fillStyle = '#ba7654'; // terracotta amphora
-  ctx.fillRect(cx - 13, cy - 5, 4, 7);
-  ctx.fillStyle = '#6d3947'; // wine wax seal
-  ctx.fillRect(cx - 12, cy - 6, 2, 2);
-
-  ctx.fillStyle = '#ba7654';
-  ctx.fillRect(cx + 8, cy - 4, 4, 6);
-  ctx.fillStyle = '#ded095'; // handles
-  ctx.fillRect(cx + 7, cy - 3, 1, 3);
-  ctx.fillRect(cx + 12, cy - 3, 1, 3);
-
-  // Multi-Candle Bronze Braziers & Candlelight Effects
-  const candles = [
-    { x: cx - 18, y: cy - 7, phase: 0 },
-    { x: cx,      y: cy - 8, phase: 1.5 },
-    { x: cx + 18, y: cy - 7, phase: 3.0 },
-  ];
-
-  candles.forEach((cand, cIdx) => {
-    // Soft radial ambient bloom radiating warmly from the table candles
-    drawSoftAmbientBloom(ctx, cand.x, cand.y, 16, animTime, 1.25, cand.phase);
-
-    // Bronze candelabra base
-    ctx.fillStyle = '#9c8053';
-    ctx.fillRect(cand.x - 2, cand.y + 2, 5, 2);
-    ctx.fillRect(cand.x - 1, cand.y + 1, 3, 2);
-
-    // Ivory wax candle pillar
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(cand.x - 1, cand.y - 2, 3, 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(cand.x, cand.y - 2, 1, 3);
-
-    // Flickering flame pixels
-    const flick = (Math.floor(animTime * 15) + cIdx * 3) % 3;
-    const fOffX = flick === 0 ? 0 : flick === 1 ? -1 : 1;
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(cand.x, cand.y - 3, 1, 2);
-    ctx.fillStyle = '#F7DEAA';
-    ctx.fillRect(cand.x + fOffX, cand.y - 4, 1, 2);
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(cand.x, cand.y - 5, 1, 1);
-  });
-
-  ctx.restore();
-}
-
-// Bustling Servant/Slave NPCs bringing platters
-export function drawFeastSlaves(
-  ctx: CanvasRenderingContext2D,
-  slaves: FeastSlaveNpc[],
-  animTime: number,
-) {
-  slaves.forEach((s) => {
-    ctx.save();
-    ctx.translate(Math.round(s.x), Math.round(s.y));
-    if (s.flipX) ctx.scale(-1, 1);
-
-    // Shadow
-    drawDitherShadow(ctx, 0, 1, 5, 2, PALETTE[5]);
-
-    const walkStride = Math.round(Math.sin(animTime * 14) * 2);
-    // Bare feet
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-2 - walkStride, -3, 2, 3);
-    ctx.fillRect(1 + walkStride, -3, 2, 3);
-
-    // Linen slave tunic (#ded095 / #a4968d) with rope belt
-    ctx.fillStyle = '#a4968d';
-    ctx.fillRect(-3, -14, 6, 11);
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(-3, -7, 6, 1);
-
-    // Hands carrying serving platter or wine flagon
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(2, -11, 2, 4);
-    ctx.fillRect(-4, -11, 2, 4);
-
-    if (s.platterItem === 'roast') {
-      ctx.fillStyle = '#9c8053'; // bronze tray
-      ctx.fillRect(2, -12, 6, 2);
-      ctx.fillStyle = '#ba7654'; // roast
-      ctx.fillRect(3, -14, 4, 3);
-    } else if (s.platterItem === 'wine') {
-      ctx.fillStyle = '#ba7654'; // flagon
-      ctx.fillRect(3, -14, 3, 5);
-      ctx.fillStyle = '#6d3947';
-      ctx.fillRect(4, -15, 1, 2);
-    } else {
-      ctx.fillStyle = '#cb9f6b'; // bread basket
-      ctx.fillRect(2, -12, 5, 3);
-    }
-
-    // Head
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-2, -19, 5, 5);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(-2, -21, 5, 2);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(1, -17, 1, 1);
-
-    ctx.restore();
-  });
-}
-
-function drawShootingStarEffect(
-  ctx: CanvasRenderingContext2D,
-  progress: number,
-  startX = 270,
-  startY = 2,
-  endX = 75,
-  endY = 40,
-) {
-  if (progress <= 0 || progress >= 1) return;
-  const curX = Math.round(startX + (endX - startX) * progress);
-  const curY = Math.round(startY + (endY - startY) * progress);
-
-  ctx.save();
-  // Head
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(curX, curY, 2, 2);
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(curX - 1, curY, 4, 1);
-  ctx.fillRect(curX, curY - 1, 1, 4);
-
-  // Diagonal trailing streak
-  for (let s = 1; s <= 14; s++) {
-    const sx = Math.round(curX - (endX - startX) * 0.025 * s);
-    const sy = Math.round(curY - (endY - startY) * 0.025 * s);
-    ctx.fillStyle = s <= 3 ? '#ffffff' : s <= 7 ? PALETTE[0] : PALETTE[15];
-    ctx.fillRect(sx, sy, 1, 1);
-  }
-
-  // Lingering fading pixel particles
-  for (let p = 0; p < 8; p++) {
-    const pT = p / 8;
-    const px = Math.round(startX + (endX - startX) * (progress * pT) + Math.sin(p * 3 + progress * 8) * 2);
-    const py = Math.round(startY + (endY - startY) * (progress * pT) + Math.cos(p * 2 + progress * 6) * 2);
-    ctx.fillStyle = (p % 2 === 0) ? PALETTE[0] : PALETTE[15];
-    ctx.fillRect(px, py, 1, 1);
-  }
-  ctx.restore();
-}
-
 export function getArrivalWelcomeLine(welcomer: Gladiator, newcomer: Gladiator): string {
   const wCult = welcomer.culture;
   const nCult = newcomer.culture;
@@ -2700,13 +512,6 @@ export function getArrivalWelcomeLine(welcomer: Gladiator, newcomer: Gladiator):
     return 'An honored veteran... I shall watch and learn from your blade.';
   }
   return 'Welcome to the ludus. Here, blood is our common currency.';
-}
-
-export interface PepTalkEvaluation {
-  statusCategory: 'INSPIRED' | 'SKEPTICAL' | 'DEMORALIZED';
-  outcome: 'Inspire' | 'Petulant' | 'Panic' | 'Reckless' | 'Rage' | 'Resolve' | 'Rattled' | 'Hesitant' | 'Resentful' | 'Threatened' | 'Neutral';
-  buff: string;
-  desc: string;
 }
 
 export function evaluatePepTalk(
@@ -2828,240 +633,6 @@ export function evaluatePepTalk(
   }
 }
 
-function drawDitherRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  baseColor: PaletteColor,
-  ditherColor: PaletteColor,
-  density: 0.25 | 0.5 | 0.75 = 0.5,
-) {
-  const ix = Math.floor(x || 0);
-  const iy = Math.floor(y || 0);
-  const iw = Math.max(0, Math.floor(w || 0));
-  const ih = Math.max(0, Math.floor(h || 0));
-  if (iw <= 0 || ih <= 0) return;
-
-  ctx.fillStyle = baseColor || PALETTE[5];
-  ctx.fillRect(ix, iy, iw, ih);
-
-  ctx.fillStyle = ditherColor || PALETTE[0];
-  for (let py = iy; py < iy + ih; py++) {
-    for (let px = ix; px < ix + iw; px++) {
-      let drawPixel = false;
-      if (density === 0.5) {
-        drawPixel = (px + py) % 2 === 0;
-      } else if (density === 0.25) {
-        drawPixel = px % 2 === 0 && py % 2 === 0;
-      } else if (density === 0.75) {
-        drawPixel = px % 2 === 0 || py % 2 === 0;
-      }
-      if (drawPixel) {
-        ctx.fillRect(px, py, 1, 1);
-      }
-    }
-  }
-}
-
-function drawDitherShadow(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  radiusX: number,
-  radiusY: number,
-  shadowColor: PaletteColor,
-) {
-  const rx = Math.max(1, Math.floor(radiusX || 1));
-  const ry = Math.max(1, Math.floor(radiusY || 1));
-  ctx.fillStyle = shadowColor || PALETTE[5];
-  const startX = Math.floor(cx - rx);
-  const endX = Math.floor(cx + rx);
-  const startY = Math.floor(cy - ry);
-  const endY = Math.floor(cy + ry);
-
-  for (let py = startY; py <= endY; py++) {
-    for (let px = startX; px <= endX; px++) {
-      const dx = (px - cx) / rx;
-      const dy = (py - cy) / ry;
-      if (dx * dx + dy * dy <= 1) {
-        if ((px + py) % 2 === 0) {
-          ctx.fillRect(px, py, 1, 1);
-        }
-      }
-    }
-  }
-}
-
-function drawCorpseFlies(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  animTime: number,
-  seed = 0,
-  flyCount = 4,
-  radius = 8,
-) {
-  // Atmospheric buzzing/jittering/flashing fly particles around fallen bodies & memorial graves
-  for (let i = 0; i < flyCount; i++) {
-    const flySeed = seed * 19 + i * 37;
-    const speed = 7.5 + (i % 3) * 3.2;
-    const t = animTime * speed + flySeed;
-
-    const angle = t * 1.8 + Math.sin(t * 3.7);
-    const r = 4 + (Math.abs(Math.sin(t * 2.3 + i)) * Math.max(1, radius - 4));
-    const jx = Math.cos(angle) * r;
-    const jy = Math.sin(angle * 1.2) * (r * 0.6) - 2;
-
-    // Twinkle/flash frames to simulate buzzing wings
-    const frameTick = Math.floor(animTime * 20 + flySeed) % 5;
-    if (frameTick === 0) continue; // brief flicker
-
-    const fx = Math.round(cx + jx);
-    const fy = Math.round(cy + jy);
-
-    // Charcoal #2A1B19 or dim gray #4f4448 1x1 pixel
-    ctx.fillStyle = frameTick % 2 === 0 ? '#2A1B19' : '#4f4448';
-    ctx.fillRect(fx, fy, 1, 1);
-  }
-}
-
-// ============================================================================
-// CAMP SPEECH BUBBLE DYNAMIC STRING GENERATOR
-// Tailored to Culture, Health (wounded vs full HP), Level (rookie vs veteran),
-// and Closest Sworn Bond ally.
-// ============================================================================
-
-function getCampSpeechLine(
-  glad: Gladiator,
-  allGlads: Gladiator[],
-  bonds: Record<string, number>,
-): string {
-  if (!glad) return '';
-
-  // If afflicted with Mad trait from Ghost Flash investigation breakdown:
-  if (glad.traits?.includes('Mad') && Math.random() < 0.65) {
-    const madLines = [
-      'THE LIGHTS! THEY LIVE BENEATH THE DIRT!',
-      'They whisper under the sand...',
-      'Do you not hear the dirt singing, manager?!',
-      'Stop poking the air! It watches us!',
-      'THE PHANTOM LIGHTS DANCE AGAIN!',
-    ];
-    return madLines[Math.floor(Math.random() * madLines.length)];
-  }
-
-  const candidates: string[] = [
-    'Hast thou traded for the Parthian archer card yet?',
-    'More spiced Falernian wine tonight, brother!',
-    'My dice always favor the high rolls after a hard training bout.',
-    'I wager three copper tokens on the next chariot race.',
-  ];
-  const culture = glad.culture || 'roman';
-
-  // 1. Cultural Heritage & Philosophy
-  if (culture === 'roman') {
-    candidates.push(
-      'Discipline triumphs where wild fury falters.',
-      'By Jupiter’s thunder, our formation remains unbreakable.',
-      'The coliseum roars only for those who master iron discipline.',
-      'A true legionary feels neither thirst nor fear—only order.',
-    );
-  } else if (culture === 'celt') {
-    candidates.push(
-      'The spirits of my ancestors whisper in the autumn wind.',
-      'My golden torc was blessed by the sacred groves of old.',
-      'No Roman cage can tame the ancestral fire within my blood.',
-      'Iron may strike deep, but ancient ferocity never bends.',
-    );
-  } else if (culture === 'berber') {
-    candidates.push(
-      'The desert winds taught me to strike before the eye can blink.',
-      'These stone walls cannot quench the swift spirit of the dunes.',
-      'A warrior who conquers desert thirst knows no defeat.',
-      'Swift as the desert viper, silent as the drifting sands.',
-    );
-  } else if (culture === 'scythian') {
-    candidates.push(
-      'My heart yearns for the open expanse of the great steppe.',
-      'Every bronze tip is notched with precision and quiet resolve.',
-      'On vast horizons, swift distance is the truest armor.',
-      'The recurve bowstring sings a melody older than these stone arenas.',
-    );
-  } else {
-    // hunnic
-    candidates.push(
-      'The iron vanguard breaks through every shield wall in time.',
-      'Years of endurance on the march forged these iron sinews.',
-      'We do not fear the pit—we raid the arena like a contested border.',
-      'Unforgiving endurance outlasts the sharpest blade.',
-    );
-  }
-
-  // 2. Health & Wound State
-  const gladHp = glad.hp || 0;
-  const gladMaxHp = Math.max(1, glad.maxHp || 150);
-  if (gladHp < gladMaxHp * 0.6) {
-    candidates.push(
-      'My ribs still ache from that murmillo’s scutum...',
-      'These linen bandages will not hold forever... I need rest.',
-      'Stitched flesh and bruised bone, but my grip is firm.',
-      'Blood was spilled today, but breath still fills my chest.',
-    );
-  } else if (gladHp >= gladMaxHp * 0.9) {
-    candidates.push(
-      'My blade is thirsty.',
-      'My sinews are coiled and ready for the roar of the crowd.',
-      'Never felt stronger. Bring forth the next challenger!',
-      'The sands call out—my arms are rested and eager.',
-    );
-  }
-
-  // 3. Level & Experience
-  const gladLevel = glad.level || 1;
-  if (gladLevel === 1) {
-    candidates.push(
-      'Will the sands remember my name?',
-      'My knees trembled before my first duel, but no longer.',
-      'One bout at a time... I must survive to earn renown.',
-      'The trainer pushes hard, but glory demands sacrifice.',
-    );
-  } else if (gladLevel >= 3) {
-    candidates.push(
-      'I have survived thirty bouts on this bloodied sand.',
-      'They chant for spectacle, but I fight for survival and honor.',
-      'Few survive enough seasons here to count gray hairs.',
-      'Veterans know the truth: pride kills faster than steel.',
-    );
-  }
-
-  // 4. Highest Bond with brother-in-arms
-  let bestScore = -1;
-  let bestAlly: Gladiator | null = null;
-  const safeGlads = Array.isArray(allGlads) ? allGlads.filter(Boolean) : [];
-  for (const other of safeGlads) {
-    if (!other || other.id === glad.id) continue;
-    const key = [glad.id, other.id].sort().join('__');
-    const score = (bonds && bonds[key]) ?? 15;
-    if (score > bestScore) {
-      bestScore = score;
-      bestAlly = other;
-    }
-  }
-
-  if (bestAlly && bestScore >= 20) {
-    const allyFirst = (bestAlly.name || 'Comrade').split(' ')[0];
-    candidates.push(
-      `I trust ${allyFirst} to watch my back.`,
-      `May the gods spare ${allyFirst} today.`,
-      `As long as ${allyFirst} stands beside me, no champion breaks us.`,
-      `Shared sweat in the yard forged an unbreakable bond with ${allyFirst}.`,
-    );
-  }
-
-  return candidates[Math.floor(Math.random() * candidates.length)] || '';
-}
 
 // ============================================================================
 // ARENA COMBAT SPEECH BUBBLE DYNAMIC STRING GENERATOR
@@ -3213,4912 +784,9 @@ function getArenaCombatLine(
 }
 
 // ============================================================================
-// DISTINCT VISUALS FOR THE 5 CULTURAL GLADIATORS
-// Explicit leftHand and rightHand anchors, consistent walk animations, subtle foot shadows.
-// Strict 16-color antiquity palette preserved from art-snapshot-v1.
-// Supports: idle, walking, sparring, resting, attack, hurt, pinned, pinning, death, flashWhite.
-// ============================================================================
-
-// ============================================================================
-// 16-BIT CAVALRY COMBATANT SPRITE (RIDER + STEED UNIFIED COMBATANT)
-// ============================================================================
-
-function drawCavalrySprite(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  culture: Culture,
-  state: 'idle' | 'walking' | 'sparring' | 'resting' | 'sitting' | 'attack' | 'hurt' | 'pinned' | 'pinning' | 'death',
-  flipX: boolean,
-  animTimer: number,
-  flashWhiteTimer = 0,
-  deathTimer = 0,
-  rageTimer = 0,
-  level = 1,
-  isCharging = false,
-) {
-  ctx.save();
-  ctx.translate(Math.round(x || 0), Math.round(y || 0));
-  if (flipX) {
-    ctx.scale(-1, 1);
-  }
-
-  const safeAnim = animTimer || 0;
-  const frame30 = Math.floor(safeAnim * 30);
-  const isWhiteFlash = flashWhiteTimer > 0;
-  const isRedFlash = state === 'pinned' && frame30 % 2 === 0;
-
-  // Rage Aura (Only if living)
-  if (rageTimer > 0 && state !== 'death') {
-    const pulse = 1 + 0.3 * Math.sin(safeAnim * 16);
-    drawDitherShadow(ctx, 0, -12, 18 * pulse, 18 * pulse, PALETTE[3]);
-  }
-
-  // 1. FALLEN DEATH PRONE
-  if (state === 'death' && deathTimer <= 0) {
-    drawDitherShadow(ctx, 0, 1, 18, 4, PALETTE[5]);
-    // Fallen steed
-    ctx.fillStyle = PALETTE[14]; // raw umber body
-    ctx.fillRect(-15, -4, 26, 4);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(-12, -7, 18, 4);
-    // Neck & head fallen on sand
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(6, -5, 8, 3);
-    ctx.fillRect(11, -4, 4, 3);
-    // Crimson saddle cloth
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(-4, -6, 8, 2);
-    // Fallen rider
-    ctx.fillStyle = PALETTE[15]; // bronze cuirass
-    ctx.fillRect(-8, -9, 8, 4);
-    ctx.fillStyle = PALETTE[5]; // helmet
-    ctx.fillRect(-12, -9, 4, 4);
-    // Blood on arena sand
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(-6, 0, 14, 2);
-    ctx.fillRect(0, 1, 6, 1);
-    // Fly particles buzzing around fallen cavalry body
-    drawCorpseFlies(ctx, -2, -4, safeAnim, 42, 6, 12);
-    ctx.restore();
-    return;
-  }
-
-  // 2. DRAMATIC DEATH FALL
-  if (state === 'death' && deathTimer > 0) {
-    const fallProgress = 1 - deathTimer / 1.6;
-    const rot = (fallProgress * Math.PI) / 2.0;
-    ctx.rotate(flipX ? -rot : rot);
-  }
-
-  // Pinned or Pinning Shake
-  if (state === 'pinned') {
-    const pinnedShakeX = frame30 % 2 === 0 ? 1 : -1;
-    ctx.translate(pinnedShakeX, 0);
-  }
-
-  // Wide ground shadow under mount
-  drawDitherShadow(ctx, 0, 1, 16, 3, PALETTE[5]);
-
-  // Gallop animation calculations
-  const isMoving = state === 'walking' || state === 'attack';
-  const gallopSpeed = 18;
-  const gallopCycle = isMoving ? Math.sin(safeAnim * gallopSpeed) : 0;
-  const gallopBob = isMoving ? Math.round(Math.abs(Math.sin(safeAnim * gallopSpeed)) * 2) : Math.round(Math.sin(safeAnim * 3) * 0.5);
-
-  let lungeX = 0;
-  if (state === 'attack') lungeX = 6;
-  else if (state === 'hurt') lungeX = -4;
-
-  const mountY = -8 - gallopBob;
-  const riderY = mountY - 10;
-
-  // HORSE LEGS
-  // Back Legs (Kick back and tuck)
-  const backLegStride = isMoving ? Math.round(gallopCycle * 5) : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[5]; // back inner leg shadow
-  ctx.fillRect(lungeX - 11 - backLegStride, mountY + 3, 2, 7);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[14]; // back outer leg
-  ctx.fillRect(lungeX - 9 - backLegStride, mountY + 4, 2, 6);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5]; // hooves
-  ctx.fillRect(lungeX - 11 - backLegStride, mountY + 9, 2, 1);
-  ctx.fillRect(lungeX - 9 - backLegStride, mountY + 9, 2, 1);
-
-  // Front Legs (Reach forward and plant)
-  const frontLegStride = isMoving ? Math.round(-gallopCycle * 6) : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[5]; // front inner leg shadow
-  ctx.fillRect(lungeX + 7 + frontLegStride, mountY + 3, 2, 7);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[14]; // front outer leg
-  ctx.fillRect(lungeX + 9 + frontLegStride, mountY + 4, 2, 6);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5]; // hooves
-  ctx.fillRect(lungeX + 7 + frontLegStride, mountY + 9, 2, 1);
-  ctx.fillRect(lungeX + 9 + frontLegStride, mountY + 9, 2, 1);
-
-  // HORSE BODY & FLANK
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[14]; // steed coat raw umber
-  ctx.fillRect(lungeX - 14, mountY - 5, 23, 9);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[4] : PALETTE[5]; // muscle belly shade
-  ctx.fillRect(lungeX - 12, mountY + 1, 20, 3);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[1]; // top back highlight
-  ctx.fillRect(lungeX - 13, mountY - 5, 21, 1);
-
-  // HORSE TAIL (Flowing with gallop)
-  const tailWave = isMoving ? Math.round(Math.sin(safeAnim * gallopSpeed) * 2) : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5]; // dark tail
-  ctx.fillRect(lungeX - 18, mountY - 4 + tailWave, 4, 2);
-  ctx.fillRect(lungeX - 21, mountY - 2 + tailWave, 4, 2);
-  ctx.fillRect(lungeX - 22, mountY + tailWave, 3, 3);
-
-  // HORSE NECK & HEAD
-  const headBob = isMoving ? Math.round(Math.sin(safeAnim * gallopSpeed) * 1.5) : 0;
-  const hx = lungeX + 9;
-  const hy = mountY - 8 + headBob;
-
-  // Arching neck
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[14];
-  ctx.fillRect(hx, hy + 2, 6, 7);
-  ctx.fillRect(hx + 2, hy - 1, 5, 5);
-
-  // Dark mane along neck
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5];
-  ctx.fillRect(hx - 1, hy, 2, 8);
-  ctx.fillRect(hx + 1, hy - 3, 2, 4);
-
-  // Head and muzzle
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[14];
-  ctx.fillRect(hx + 4, hy - 5, 7, 6);
-  ctx.fillRect(hx + 8, hy - 3, 5, 4); // muzzle
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5]; // nostrils & mouth
-  ctx.fillRect(hx + 12, hy - 1, 2, 2);
-
-  // Ears
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[14];
-  ctx.fillRect(hx + 4, hy - 8, 2, 3);
-
-  // Eye
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0];
-  ctx.fillRect(hx + 7, hy - 4, 1, 1);
-
-  // Reins & Bridle
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15]; // bronze bridle
-  ctx.fillRect(hx + 8, hy - 4, 1, 4);
-  ctx.fillRect(hx + 5, hy - 2, 4, 1);
-  ctx.fillStyle = PALETTE[14]; // leather reins from bit to rider's hand
-  ctx.fillRect(lungeX + 1, riderY + 4, hx + 5 - (lungeX + 1), 1);
-
-  // SADDLE CLOTH (Imperial Crimson with Gold Fringe)
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[3]; // crimson blanket
-  ctx.fillRect(lungeX - 5, mountY - 6, 12, 6);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15]; // gold fringe
-  ctx.fillRect(lungeX - 5, mountY, 12, 1);
-  ctx.fillRect(lungeX - 5, mountY - 6, 1, 6);
-  ctx.fillRect(lungeX + 6, mountY - 6, 1, 6);
-
-  // RIDER LEGS & STIRRUPS
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[14]; // rider leather breeches
-  ctx.fillRect(lungeX - 2, mountY - 5, 5, 8);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15]; // bronze greave
-  ctx.fillRect(lungeX - 1, mountY + 2, 3, 4);
-  ctx.fillStyle = PALETTE[5]; // iron stirrup ring
-  ctx.fillRect(lungeX - 2, mountY + 5, 5, 1);
-
-  // RIDER TORSO & ARMOR (Heavy Imperial Cavalry Cuirass)
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[15]; // bronze muscle breastplate
-  ctx.fillRect(lungeX - 3, riderY - 6, 7, 8);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5]; // muscle shading
-  ctx.fillRect(lungeX - 1, riderY - 4, 3, 4);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // gold specular glint
-  ctx.fillRect(lungeX - 2, riderY - 5, 2, 2);
-
-  // Banded cavalry pauldrons
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15];
-  ctx.fillRect(lungeX - 5, riderY - 6, 2, 4);
-  ctx.fillRect(lungeX + 3, riderY - 6, 2, 4);
-
-  // RIDER HEAD & HELMET
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[15]; // bronze cavalry helmet
-  ctx.fillRect(lungeX - 3, riderY - 13, 7, 7);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5]; // eye slit & cheek guard
-  ctx.fillRect(lungeX + 1, riderY - 10, 3, 2);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // eyes glint
-  ctx.fillRect(lungeX + 2, riderY - 10, 1, 1);
-
-  // Crimson Cavalry Crest / Plume trailing in wind
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[3];
-  ctx.fillRect(lungeX - 3, riderY - 16, 5, 4);
-  ctx.fillRect(lungeX - 6, riderY - 15, 3, 3);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0];
-  ctx.fillRect(lungeX - 1, riderY - 17, 3, 1);
-
-  // CAVALRY WEAPON: LONG VERTICAL LANCE (1 BLOCK WIDE) WITH FLUTTERING SWALLOWTAIL BANNER
-  // Rendered held straight vertically (90 degrees), exactly 1 logical pixel/block wide
-  const lanceX = lungeX + (state === 'attack' ? 5 : 2);
-  const lanceTopY = riderY - 26;
-  const lanceBottomY = mountY + 4;
-  const lanceHeight = lanceBottomY - lanceTopY;
-
-  // Lance Shaft (strictly 1 logical pixel/block wide)
-  ctx.fillStyle = PALETTE[14]; // ash wood shaft
-  ctx.fillRect(lanceX, lanceTopY + 4, 1, lanceHeight - 4);
-  // Steel spearhead (strictly 1 logical pixel wide)
-  ctx.fillStyle = PALETTE[11];
-  ctx.fillRect(lanceX, lanceTopY + 1, 1, 3);
-  // Gleaming tip (strictly 1 pixel wide)
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(lanceX, lanceTopY, 1, 1);
-
-  // 16-bit Swallowtail Flutter Banner / Pennant Flag directly beneath spearhead
-  // Crimson (#ba7654, PALETTE[2]) and Gold (#ded095, PALETTE[0])
-  const flagWave = Math.sin(safeAnim * 14) > 0 ? 1 : 0;
-  const flagY = lanceTopY + 4;
-  ctx.fillStyle = '#ba7654'; // crimson swallowtail body
-  ctx.fillRect(lanceX - 5, flagY, 5, 4);
-  // Swallowtail twin split tails
-  ctx.fillRect(lanceX - 7 + flagWave, flagY, 2, 2);
-  ctx.fillRect(lanceX - 7 + flagWave, flagY + 2, 2, 2);
-  ctx.fillStyle = PALETTE[5]; // center notch cut
-  ctx.fillRect(lanceX - 6 + flagWave, flagY + 1, 2, 2);
-  // Gold stripe / cross accent on pennant
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(lanceX - 4, flagY + 1, 4, 1);
-  ctx.fillRect(lanceX - 2, flagY, 1, 4);
-
-  // Dust puff particles under hooves when galloping
-  if (isMoving && Math.floor(safeAnim * 12) % 2 === 0) {
-    ctx.fillStyle = PALETTE[1]; // sand ochre dust
-    ctx.fillRect(lungeX - 14, mountY + 8, 3, 1);
-    ctx.fillRect(lungeX - 16, mountY + 7, 2, 1);
-  }
-
-  ctx.restore();
-}
-
-// ============================================================================
-// 16-BIT COLOSSAL WAR ELEPHANT SPRITE (ARMORED HEAD PLATE, TUSKS, HOWDAH)
-// ============================================================================
-
-function drawElephantSprite(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  state: 'idle' | 'walking' | 'sparring' | 'resting' | 'sitting' | 'attack' | 'hurt' | 'pinned' | 'pinning' | 'death',
-  flipX: boolean,
-  animTimer: number,
-  flashWhiteTimer = 0,
-  deathTimer = 0,
-  rageTimer = 0,
-  level = 1,
-  isCharging = false,
-) {
-  ctx.save();
-  ctx.translate(Math.round(x || 0), Math.round(y || 0));
-  if (flipX) {
-    ctx.scale(-1, 1);
-  }
-
-  const safeAnim = animTimer || 0;
-  const frame30 = Math.floor(safeAnim * 30);
-  const isWhiteFlash = flashWhiteTimer > 0;
-  const isRedFlash = (state === 'pinned' || state === 'hurt') && frame30 % 2 === 0;
-
-  // Rage Aura
-  if (rageTimer > 0) {
-    const pulse = 1 + 0.3 * Math.sin(safeAnim * 16);
-    drawDitherShadow(ctx, 0, -14, 28 * pulse, 22 * pulse, PALETTE[3]);
-  }
-
-  // 1. FALLEN DEATH STATE
-  if (state === 'death' && deathTimer <= 0) {
-    drawDitherShadow(ctx, 0, 1, 26, 6, PALETTE[5]);
-    // Collapsed massive flank
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(-22, -10, 42, 10);
-    ctx.fillStyle = PALETTE[9];
-    ctx.fillRect(-18, -6, 36, 6);
-    // Broken Howdah on sand
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(-12, -14, 16, 5);
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(-8, -12, 12, 3);
-    // Tusks in sand
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(16, -6, 12, 3);
-    ctx.fillRect(26, -9, 4, 3);
-    // Blood on sand
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(-14, 0, 32, 2);
-    ctx.fillRect(0, 1, 18, 1);
-    // Fly particles buzzing around fallen war elephant
-    drawCorpseFlies(ctx, 0, -6, safeAnim, 88, 8, 18);
-    ctx.restore();
-    return;
-  }
-
-  // 2. DRAMATIC DEATH FALL
-  if (state === 'death' && deathTimer > 0) {
-    const fallProgress = 1 - deathTimer / 1.6;
-    const rot = (fallProgress * Math.PI) / 2.2;
-    ctx.rotate(flipX ? -rot : rot);
-  }
-
-  // Wide ground shadow under elephant
-  drawDitherShadow(ctx, 0, 1, 24, 6, PALETTE[5]);
-
-  const isMoving = state === 'walking' || state === 'attack' || isCharging;
-  const walkSpeed = isCharging ? 20 : 7;
-  const walkCycle = isMoving ? Math.sin(safeAnim * walkSpeed) : 0;
-  const walkBob = isMoving ? Math.round(Math.abs(Math.sin(safeAnim * walkSpeed)) * 1.5) : 0;
-
-  let lungeX = 0;
-  if (isCharging) lungeX = 6;
-  else if (state === 'attack') lungeX = 4;
-  else if (state === 'hurt') lungeX = -3;
-
-  const bellyY = -12 - walkBob;
-  const backY = bellyY - 14;
-
-  // 4 MASSIVE PILLAR LEGS
-  // Back Legs
-  const backLegStride = isMoving ? Math.round(walkCycle * 4) : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[9]; // inner leg shadow
-  ctx.fillRect(lungeX - 16 - backLegStride, bellyY + 2, 6, 11);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[10]; // outer leg
-  ctx.fillRect(lungeX - 12 - backLegStride, bellyY + 3, 6, 10);
-  // Ivory toenails
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0];
-  ctx.fillRect(lungeX - 12 - backLegStride, bellyY + 12, 2, 1);
-  ctx.fillRect(lungeX - 9 - backLegStride, bellyY + 12, 2, 1);
-
-  // Front Legs
-  const frontLegStride = isMoving ? Math.round(-walkCycle * 4) : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[9]; // inner front leg
-  ctx.fillRect(lungeX + 6 + frontLegStride, bellyY + 2, 6, 11);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[10]; // outer front leg
-  ctx.fillRect(lungeX + 10 + frontLegStride, bellyY + 3, 6, 10);
-  // Ivory toenails
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0];
-  ctx.fillRect(lungeX + 10 + frontLegStride, bellyY + 12, 2, 1);
-  ctx.fillRect(lungeX + 13 + frontLegStride, bellyY + 12, 2, 1);
-
-  // MASSIVE ELEPHANT BODY / FLANK (Stone Gray Palette: #817475, #4f4448, #3f363b)
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[10]; // weathered stone gray
-  ctx.fillRect(lungeX - 22, backY, 34, 18);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[4] : PALETTE[9]; // dark charcoal muscle shade
-  ctx.fillRect(lungeX - 20, bellyY - 3, 30, 6);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5]; // belly under-shadow
-  ctx.fillRect(lungeX - 18, bellyY + 1, 26, 2);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[11]; // top back highlight
-  ctx.fillRect(lungeX - 21, backY, 32, 2);
-
-  // TAIL AT REAR
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[9];
-  ctx.fillRect(lungeX - 24, backY + 4, 3, 10);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5];
-  ctx.fillRect(lungeX - 25, backY + 12, 2, 4); // tuft
-
-  // CARTHAGINIAN WAR BLANKET (Crimson & Gold Trim)
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[3]; // crimson blanket
-  ctx.fillRect(lungeX - 14, backY - 2, 20, 11);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // gold border & fringe
-  ctx.fillRect(lungeX - 14, backY + 8, 20, 2);
-  ctx.fillRect(lungeX - 14, backY - 2, 2, 11);
-  ctx.fillRect(lungeX + 4, backY - 2, 2, 11);
-  // Gold tessellated star emblem
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15];
-  ctx.fillRect(lungeX - 6, backY + 2, 4, 4);
-
-  // TOWER HOWDAH ON ELEPHANT'S BACK (Wood & Bronze Plates)
-  const howdahY = backY - 9;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[14]; // raw umber timber box
-  ctx.fillRect(lungeX - 10, howdahY, 14, 8);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15]; // bronze battle trim & crenelations
-  ctx.fillRect(lungeX - 10, howdahY, 14, 2);
-  ctx.fillRect(lungeX - 10, howdahY - 2, 3, 2); // left crenel
-  ctx.fillRect(lungeX - 4, howdahY - 2, 3, 2);  // center crenel
-  ctx.fillRect(lungeX + 1, howdahY - 2, 3, 2);  // right crenel
-  // Howdah Imperial Pennant / Standard
-  ctx.fillStyle = PALETTE[14]; // wood pole
-  ctx.fillRect(lungeX - 10, howdahY - 11, 1, 12);
-  ctx.fillStyle = PALETTE[3]; // crimson pennant
-  ctx.fillRect(lungeX - 15, howdahY - 11, 5, 3);
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(lungeX - 16, howdahY - 10, 2, 1);
-
-  // ELEPHANT HEAD & ARMORED BRONZE HEAD PLATE (CHAMFRON)
-  const hx = lungeX + 10;
-  const hy = backY - 3;
-
-  // Head dome
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[10];
-  ctx.fillRect(hx, hy - 4, 13, 15);
-  ctx.fillRect(hx + 3, hy - 7, 9, 5);
-
-  // Armored Bronze Chamfron (Headplate) with Spikes
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15]; // antique bronze
-  ctx.fillRect(hx + 4, hy - 7, 8, 8);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // gold specular glint
-  ctx.fillRect(hx + 6, hy - 6, 4, 2);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[2]; // terracotta spike boss
-  ctx.fillRect(hx + 10, hy - 4, 3, 3);
-
-  // Heavy Ear
-  const earFlap = isMoving ? Math.round(Math.sin(safeAnim * walkSpeed) * 2) : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[9];
-  ctx.fillRect(hx - 2, hy - 3 + earFlap, 6, 12);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5];
-  ctx.fillRect(hx - 1, hy + 7 + earFlap, 4, 3);
-
-  // Eye
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isCharging ? PALETTE[3] : PALETTE[5];
-  ctx.fillRect(hx + 6, hy - 1, 2, 2);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0];
-  ctx.fillRect(hx + 6, hy - 1, 1, 1);
-
-  // IVORY TUSKS (Colossal Curved Ivory with Bronze Ferrules)
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15]; // bronze tusk bands
-  ctx.fillRect(hx + 9, hy + 6, 3, 3);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // ivory tusk body
-  ctx.fillRect(hx + 12, hy + 6, 8, 3);
-  ctx.fillRect(hx + 18, hy + 3, 4, 4); // curve upward
-  ctx.fillRect(hx + 21, hy, 3, 4);     // sharp upward tip
-  ctx.fillRect(hx + 23, hy - 3, 2, 4);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[1]; // shadow edge
-  ctx.fillRect(hx + 12, hy + 8, 7, 1);
-
-  // TRUNK (Swinging or Raised High in Trumpet During Charge)
-  if (isCharging) {
-    // Trumpeting High Trunk!
-    ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[10];
-    ctx.fillRect(hx + 8, hy + 4, 5, 4);
-    ctx.fillRect(hx + 11, hy + 1, 4, 4);
-    ctx.fillRect(hx + 13, hy - 4, 4, 6);
-    ctx.fillRect(hx + 15, hy - 9, 3, 6);
-    ctx.fillRect(hx + 17, hy - 14, 3, 6);
-    ctx.fillRect(hx + 16, hy - 17, 4, 4); // curl back
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(hx + 18, hy - 16, 2, 2); // nostrils
-  } else {
-    // Plodding Hanging Trunk
-    const trunkSway = Math.round(Math.sin(safeAnim * 5) * 2);
-    ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[10];
-    ctx.fillRect(hx + 8, hy + 5, 5, 5);
-    ctx.fillRect(hx + 7 + trunkSway, hy + 9, 4, 6);
-    ctx.fillRect(hx + 8 + trunkSway * 1.5, hy + 14, 4, 5);
-    ctx.fillRect(hx + 11 + trunkSway * 1.5, hy + 16, 3, 3); // tip curl
-  }
-
-  // Trample dust puffs under feet
-  if (isMoving && Math.floor(safeAnim * 10) % 2 === 0) {
-    ctx.fillStyle = PALETTE[1]; // sand dust
-    ctx.fillRect(lungeX - 16, bellyY + 11, 4, 2);
-    ctx.fillRect(lungeX + 6, bellyY + 11, 4, 2);
-  }
-
-  ctx.restore();
-}
-
-function drawEmperorBossSprite(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  state: 'idle' | 'walking' | 'sparring' | 'resting' | 'sitting' | 'attack' | 'hurt' | 'pinned' | 'pinning' | 'death',
-  flipX: boolean,
-  animTimer: number,
-  flashWhiteTimer = 0,
-  deathTimer = 0,
-  rageTimer = 0,
-) {
-  ctx.save();
-  ctx.translate(Math.round(x || 0), Math.round(y || 0));
-  if (flipX) {
-    ctx.scale(-1, 1);
-  }
-
-  const safeAnim = animTimer || 0;
-  const frame30 = Math.floor(safeAnim * 30);
-  const isWhiteFlash = flashWhiteTimer > 0;
-  const isRedFlash = (state === 'pinned' || state === 'hurt') && frame30 % 2 === 0;
-
-  // Golden Divine Aura sparkle particles overhead (Only if living)
-  if (state !== 'death') {
-    const glowSeed = Math.floor(safeAnim * 12);
-    const glowCoords = [
-      [-8, -32], [8, -31], [-9, -18], [9, -16], [-7, -6], [7, -5], [0, -36], [6, -24], [-6, -25]
-    ];
-    ctx.fillStyle = '#ded095';
-    for (let i = 0; i < glowCoords.length; i++) {
-      if ((glowSeed + i) % 3 === 0) {
-        ctx.fillRect(glowCoords[i][0], glowCoords[i][1], 1, 1);
-      }
-    }
-  }
-
-  // 1. FALLEN DEATH PRONE
-  if (state === 'death' && deathTimer <= 0) {
-    drawDitherShadow(ctx, 0, 1, 15, 3, PALETTE[5]);
-    // Fallen Emperor body
-    ctx.fillStyle = PALETTE[4]; // imperial purple toga crumpled
-    ctx.fillRect(-12, -4, 20, 4);
-    ctx.fillStyle = PALETTE[15]; // gilded lorica squamata
-    ctx.fillRect(-6, -6, 12, 3);
-    // Shattered golden laurel wreath in sand
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(8, -4, 4, 2);
-    ctx.fillRect(10, -6, 2, 2);
-    // Gilded Gladius dropped on sand
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(-14, -2, 4, 1);
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(-18, -2, 4, 1);
-    // Blood on sand
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(-4, 0, 10, 2);
-    drawCorpseFlies(ctx, 0, -3, safeAnim, 77, 4, 8);
-    ctx.restore();
-    return;
-  }
-
-  // 2. DRAMATIC DEATH FALL
-  if (state === 'death' && deathTimer > 0) {
-    const fallProgress = 1 - deathTimer / 1.6;
-    const rot = (fallProgress * Math.PI) / 2.1;
-    ctx.rotate(flipX ? -rot : rot);
-  }
-
-  // Pinned struggling shake effect
-  if (state === 'pinned') {
-    const pinnedShakeX = frame30 % 2 === 0 ? 1 : -1;
-    ctx.translate(pinnedShakeX, 0);
-  }
-
-  // Foot shadow
-  drawDitherShadow(ctx, 0, 1, 8, 2, PALETTE[5]);
-
-  let lungeX = 0;
-  if (state === 'attack' || state === 'pinning') {
-    lungeX = 5;
-  } else if (state === 'hurt') {
-    lungeX = -4;
-  } else if (state === 'walking') {
-    lungeX = Math.round(Math.sin(safeAnim * 9) * 1.3);
-  }
-
-  const hipY = -12;
-  const torsoY = -21;
-  const headY = -28;
-
-  // LEGS & GILDED GREAVES
-  const walkStride = state === 'walking' ? Math.round(Math.sin(safeAnim * 12) * 2) : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[4]; // imperial purple tunic hem
-  ctx.fillRect(lungeX - 3, hipY - 2, 7, 3);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[15];
-  ctx.fillRect(lungeX - 2 - walkStride, hipY + 1, 2, 6);
-  ctx.fillRect(lungeX + 1 + walkStride, hipY + 1, 2, 6);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // gleaming gold boots
-  ctx.fillRect(lungeX - 2 - walkStride, hipY + 7, 2, 5);
-  ctx.fillRect(lungeX + 1 + walkStride, hipY + 7, 2, 5);
-
-  // FLOWING IMPERIAL PURPLE PALUDAMENTUM (CAPE FLUTTERING IN ARENA WIND)
-  const capeWave = Math.sin(safeAnim * 8) > 0 ? 1 : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[4]; // royal purple #6d3947
-  ctx.fillRect(lungeX - 7 - capeWave, torsoY - 1, 4, 14);
-  ctx.fillRect(lungeX - 8 - capeWave, torsoY + 4, 3, 10);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // gold embroidered border on cape
-  ctx.fillRect(lungeX - 7 - capeWave, torsoY + 13, 4, 1);
-  ctx.fillRect(lungeX - 8 - capeWave, torsoY + 13, 3, 1);
-
-  // TORSO: GILDED LORICA SQUAMATA (Gold Scale Cuirass)
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[15];
-  ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // gleaming masterwork gold
-  ctx.fillRect(lungeX - 3, torsoY + 1, 6, 6);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[3]; // crimson imperial sash across chest
-  ctx.fillRect(lungeX - 3, torsoY + 2, 6, 2);
-  ctx.fillStyle = PALETTE[4]; // purple pteruges
-  ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(lungeX - 4, torsoY + 8, 8, 1);
-
-  // Gilded Winged Pauldrons
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0];
-  ctx.fillRect(lungeX - 6, torsoY - 2, 3, 5);
-  ctx.fillRect(lungeX + 4, torsoY - 2, 3, 5);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15];
-  ctx.fillRect(lungeX - 5, torsoY - 1, 2, 3);
-  ctx.fillRect(lungeX + 4, torsoY - 1, 2, 3);
-
-  // HEAD & GOLDEN LAUREL WREATH
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[1];
-  ctx.fillRect(lungeX - 3, headY + 2, 6, 5);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[9]; // trimmed beard
-  ctx.fillRect(lungeX - 3, headY + 5, 6, 2);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[5]; // stern eyes
-  ctx.fillRect(lungeX + 1, headY + 3, 2, 1);
-  // Golden Laurel Crown
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[15];
-  ctx.fillRect(lungeX - 4, headY - 1, 8, 4);
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[0]; // gleaming laurel leaf points
-  ctx.fillRect(lungeX - 5, headY - 3, 2, 3);
-  ctx.fillRect(lungeX + 4, headY - 3, 2, 3);
-  ctx.fillRect(lungeX - 2, headY - 4, 5, 2);
-  ctx.fillRect(lungeX, headY - 5, 2, 2);
-
-  // WEAPONS: GOLDEN EAGLE PARMA SHIELD (LEFT) & GILDED IMPERIAL GLADIUS (RIGHT)
-  const isStriking = state === 'attack' || state === 'sparring' || state === 'pinning';
-  const lx = lungeX - 5;
-  const ly = torsoY + 4;
-  const rx = lungeX + 3;
-  const ry = torsoY + 2;
-
-  // LEFT HAND: Golden Eagle Parma Shield
-  ctx.fillStyle = PALETTE[15]; // antique gold rim
-  ctx.fillRect(lx - 3, ly - 4, 6, 12);
-  ctx.fillStyle = PALETTE[4];  // imperial purple face
-  ctx.fillRect(lx - 2, ly - 3, 4, 10);
-  ctx.fillStyle = PALETTE[0];  // golden Aquila eagle emblem in relief
-  ctx.fillRect(lx - 2, ly - 1, 4, 3);
-  ctx.fillRect(lx - 1, ly - 2, 2, 5);
-  ctx.fillRect(lx - 3, ly + 1, 6, 1);
-
-  // RIGHT HAND: Gilded Masterwork Imperial Gladius
-  if (isStriking) {
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(rx - 1, ry + 1, 3, 2);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(rx + 2, ry - 1, 2, 6);
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(rx + 4, ry, 12, 2);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(rx + 4, ry - 1, 10, 1);
-    ctx.fillRect(rx + 15, ry, 2, 1);
-
-    // Radiant golden sweeping slash trail
-    ctx.fillStyle = 'rgba(255, 245, 180, 0.75)';
-    ctx.fillRect(rx + 6, ry - 6, 9, 2);
-    ctx.fillRect(rx + 13, ry - 4, 7, 2);
-    ctx.fillRect(rx + 17, ry - 2, 5, 2);
-  } else {
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(rx, ry + 1, 2, 3);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(rx - 2, ry, 6, 2);
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(rx, ry - 12, 2, 12);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(rx, ry - 14, 2, 2);
-  }
-
-  ctx.restore();
-}
-
-function drawCulturalGladiator(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  culture: Culture,
-  state: 'idle' | 'walking' | 'sparring' | 'resting' | 'sitting' | 'attack' | 'hurt' | 'pinned' | 'pinning' | 'death',
-  flipX: boolean,
-  animTimer: number,
-  flashWhiteTimer = 0,
-  deathTimer = 0,
-  rageTimer = 0,
-  level = 1,
-  equipped?: { rightHand: string | null; leftHand: string | null },
-  isCavalry = false,
-  isElephant = false,
-  isCharging = false,
-  stunTimer = 0,
-  isEmperor = false,
-  heroType?: 'beastmaster' | 'saladin' | 'zuzubu',
-  executionStance?: { isExecutioner: boolean; strikeProgress: number },
-  isDead = false,
-) {
-  const isProneOrDying = isDead || state === 'death';
-  const effectiveState = isProneOrDying ? 'death' : state;
-  const effectiveCharging = isProneOrDying ? false : isCharging;
-  const effectiveStun = isProneOrDying ? 0 : stunTimer;
-
-  // If Emperor Boss unit, render with majestic imperial purple and gold regalia
-  if (isEmperor) {
-    drawEmperorBossSprite(
-      ctx,
-      x,
-      y,
-      effectiveState,
-      flipX,
-      animTimer,
-      flashWhiteTimer,
-      deathTimer,
-      rageTimer,
-    );
-    return;
-  }
-  // If this unit is a War Elephant, render massive colossal 16-bit blocky elephant sprite
-  if (isElephant) {
-    drawElephantSprite(
-      ctx,
-      x,
-      y,
-      effectiveState,
-      flipX,
-      animTimer,
-      flashWhiteTimer,
-      deathTimer,
-      rageTimer,
-      level,
-      effectiveCharging,
-    );
-    return;
-  }
-
-  // If this unit is a cavalry combatant, render as unified 16-bit rider + steed unit
-  if (isCavalry) {
-    drawCavalrySprite(
-      ctx,
-      x,
-      y,
-      culture,
-      effectiveState,
-      flipX,
-      animTimer,
-      flashWhiteTimer,
-      deathTimer,
-      rageTimer,
-      level,
-      effectiveCharging,
-    );
-    return;
-  }
-
-  ctx.save();
-  ctx.translate(Math.round(x || 0), Math.round(y || 0));
-  if (flipX) {
-    ctx.scale(-1, 1);
-  }
-
-  const safeAnim = animTimer || 0;
-  const clampedLvl = Math.max(1, Math.min(5, Math.round(level || 1)));
-
-  // 1. UNCONDITIONAL FALLEN PRONE / COLLAPSED DEATH STATE (Absolute Precedence)
-  if (isProneOrDying && deathTimer <= 0) {
-    drawDitherShadow(ctx, 0, 1, 14, 3, PALETTE[5]);
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(-12, -2, 8, 2);
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(-10, -2, 4, 1);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(-5, -5, 10, 4);
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(4, -6, 5, 5);
-    // Blood stain on sand
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(-2, -1, 6, 2);
-    // Small flashing/buzzing fly particles around fallen body
-    drawCorpseFlies(ctx, 0, -3, safeAnim, Math.abs(Math.round(x * 7 + y * 13)));
-    ctx.restore();
-    return;
-  }
-
-  // 2. DRAMATIC SLOW-FALL ANIMATION (During fatal blow sequence)
-  if (isProneOrDying && deathTimer > 0) {
-    const fallProgress = 1 - deathTimer / 1.6; // 0 to 1
-    const rot = (fallProgress * Math.PI) / 2.2; // tilts backward
-    ctx.rotate(flipX ? -rot : rot);
-  }
-
-  // Stunned / Knockdown Prone State (Only if ALIVE!)
-  if (!isProneOrDying && effectiveStun > 0) {
-    drawDitherShadow(ctx, 0, 1, 14, 3, PALETTE[5]);
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(-12, -2, 8, 2);
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(-10, -2, 4, 1);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(-5, -5, 10, 4);
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(4, -6, 5, 5);
-    // Dizzy spinning stars overhead
-    const starCycle = safeAnim * 8;
-    for (let s = 0; s < 3; s++) {
-      const angle = starCycle + (s * Math.PI * 2) / 3;
-      const sx = Math.cos(angle) * 8;
-      const sy = -14 + Math.sin(angle) * 3;
-      ctx.fillStyle = PALETTE[0]; // gleaming gold star
-      ctx.fillRect(Math.round(sx), Math.round(sy), 2, 2);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(Math.round(sx) + 1, Math.round(sy) + 1, 1, 1);
-    }
-    ctx.restore();
-    return;
-  }
-
-  // Level V Legend: subtle radiating golden pixels (Only if living)
-  if (!isProneOrDying && clampedLvl >= 5) {
-    const glowSeed = Math.floor(safeAnim * 10);
-    const glowCoords = [
-      [-7, -31], [7, -30], [-8, -17], [8, -15], [-6, -5], [6, -4], [0, -35], [5, -22], [-5, -23]
-    ];
-    ctx.fillStyle = PALETTE[0]; // gleaming white-hot gold
-    for (let i = 0; i < glowCoords.length; i++) {
-      if ((glowSeed + i) % 3 === 0) {
-        ctx.fillRect(glowCoords[i][0], glowCoords[i][1], 1, 1);
-      }
-    }
-  }
-
-  // Pulsating red RAGE aura (Only if living)
-  if (!isProneOrDying && rageTimer > 0) {
-    const pulse = 1 + 0.3 * Math.sin(safeAnim * 16);
-    drawDitherShadow(ctx, 0, -12, 13 * pulse, 17 * pulse, PALETTE[3]);
-  }
-
-  // Frame counter for 30 FPS timing
-  const frame30 = Math.floor(safeAnim * 30);
-  const isWhiteFlash = flashWhiteTimer > 0;
-  const isRedFlash = state === 'pinned' && frame30 % 2 === 0;
-
-  // Pinned struggling shake effect (victim being pinned only - pinning attacker remains steady)
-  if (state === 'pinned') {
-    const pinnedShakeX = frame30 % 2 === 0 ? 1 : -1;
-    const pinnedShakeY = Math.floor(frame30 / 2) % 2 === 0 ? 1 : -1;
-    ctx.translate(pinnedShakeX, pinnedShakeY);
-  }
-
-  // Relaxed sitting pose on dirt / camp bench
-  if (state === 'sitting') {
-    drawDitherShadow(ctx, 0, 1, 9, 3, PALETTE[5]);
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(-7, -4, 14, 3);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(-6, -1, 2, 2);
-    ctx.fillRect(4, -1, 2, 2);
-
-    ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[14];
-    ctx.fillRect(-5, -8, 10, 5);
-    ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[4] : (clampedLvl >= 2 ? PALETTE[15] : PALETTE[14]);
-    ctx.fillRect(-4, -6, 8, 3);
-
-    const sitTorsoY = -16;
-    ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : (clampedLvl >= 3 ? PALETTE[15] : PALETTE[14]);
-    ctx.fillRect(-4, sitTorsoY, 8, 8);
-    ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[1];
-    ctx.fillRect(-2, sitTorsoY + 1, 4, 4);
-
-    ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[1];
-    ctx.fillRect(-5, sitTorsoY + 4, 2, 5);
-    ctx.fillRect(3, sitTorsoY + 4, 2, 5);
-
-    const sitHeadY = -23;
-    ctx.fillStyle = isWhiteFlash ? PALETTE[0] : PALETTE[1];
-    ctx.fillRect(-3, sitHeadY + 2, 6, 5);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(0, sitHeadY + 3, 2, 1);
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(-3, sitHeadY, 6, 2);
-
-    ctx.restore();
-    return;
-  }
-
-  // Foot shadow
-  drawDitherShadow(ctx, 0, 1, 7, 2, PALETTE[5]);
-
-  let lungeX = 0;
-  if (state === 'attack' || state === 'sparring' || state === 'pinning') {
-    lungeX = 4;
-  } else if (state === 'hurt') {
-    lungeX = -3;
-  } else if (state === 'pinned') {
-    lungeX = 0;
-  } else if (state === 'walking') {
-    lungeX = Math.round(Math.sin(animTimer * 9) * 1.2);
-  }
-
-  // STRICT ANCHORS DEFINITION:
-  // Hip / Legs: hipY = -12
-  // Left foot anchor: (lungeX - 2 - walkStride, hipY + 6)
-  // Right foot anchor: (lungeX + 1 + walkStride, hipY + 6)
-  // Torso: torsoY = -21
-  // Head: headY = -28
-  // Left hand anchor: (lungeX - 5, torsoY + 4)
-  // Right hand anchor: (lungeX + 3, torsoY + 2)
-  const hipY = -12;
-  const torsoY = -21;
-  const headY = -28;
-
-  // 1. LEGS & GREAVES (EVOLVES PER LEVEL - STRICT FOOT ANCHOR MAINTAINED)
-  const walkStride = state === 'walking' ? Math.round(Math.sin(animTimer * 12) * 2) : 0;
-  ctx.fillStyle = isWhiteFlash ? PALETTE[0] : isRedFlash ? PALETTE[3] : PALETTE[14];
-  ctx.fillRect(lungeX - 2 - walkStride, hipY, 2, 6);
-  ctx.fillRect(lungeX + 1 + walkStride, hipY, 2, 6);
-
-  // Greaves / boots evolution based on level:
-  // Level 1: Basic leather wraps. Level 2+: Bronze greaves. Level 4+: Gilded greaves & knee cops.
-  if (isWhiteFlash) {
-    ctx.fillStyle = PALETTE[0];
-  } else if (isRedFlash) {
-    ctx.fillStyle = PALETTE[4];
-  } else if (clampedLvl >= 4) {
-    ctx.fillStyle = PALETTE[15]; // Ornate bronze greaves
-  } else if (clampedLvl >= 2) {
-    ctx.fillStyle = culture === 'roman' || culture === 'hunnic' ? PALETTE[15] : PALETTE[10];
-  } else {
-    ctx.fillStyle = PALETTE[14]; // Level 1 basic leather wraps
-  }
-  ctx.fillRect(lungeX - 2 - walkStride, hipY + 6, 2, 6);
-  ctx.fillRect(lungeX + 1 + walkStride, hipY + 6, 2, 6);
-
-  // Level 3+ Greave knee caps and Level 4+ Gold trim
-  if (!isWhiteFlash && !isRedFlash && clampedLvl >= 3) {
-    ctx.fillStyle = clampedLvl >= 4 ? PALETTE[0] : PALETTE[15];
-    ctx.fillRect(lungeX - 2 - walkStride, hipY + 5, 2, 1);
-    ctx.fillRect(lungeX + 1 + walkStride, hipY + 5, 2, 1);
-  }
-
-  // 2. TORSO & ARMOR (EVOLVES PER LEVEL AND CULTURE, OR UNIQUE HERO SPRITES)
-  if (isWhiteFlash) {
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-  } else if (isRedFlash) {
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-    ctx.fillStyle = PALETTE[4];
-    ctx.fillRect(lungeX - 3, torsoY + 2, 6, 2);
-    ctx.fillRect(lungeX - 3, torsoY + 6, 6, 2);
-  } else if (heroType === 'beastmaster') {
-    // BEASTMASTER: Raw umber leather tunic, furred animal pelt pauldron on left shoulder, bone charms across chest
-    ctx.fillStyle = PALETTE[14]; // raw umber hide vest
-    ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-    ctx.fillStyle = PALETTE[1]; // bare chest reveal
-    ctx.fillRect(lungeX - 1, torsoY + 1, 3, 4);
-    // Ivory bone charms / fang necklace
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(lungeX - 3, torsoY + 2, 1, 2);
-    ctx.fillRect(lungeX + 2, torsoY + 2, 1, 2);
-    ctx.fillRect(lungeX - 1, torsoY + 4, 2, 2);
-    // Furred pelt pauldron on left shoulder
-    ctx.fillStyle = PALETTE[14]; // fur base
-    ctx.fillRect(lungeX - 6, torsoY - 2, 3, 6);
-    ctx.fillStyle = PALETTE[1];  // tan fur tufts
-    ctx.fillRect(lungeX - 7, torsoY - 1, 2, 4);
-    ctx.fillRect(lungeX - 5, torsoY + 3, 2, 2);
-    // Leather belt with iron studs
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(lungeX - 1, torsoY + 7, 2, 2);
-  } else if (heroType === 'saladin') {
-    // SALADIN THE MEDIC: Desert tunic with emerald sage herbalist sashes and apothecary pouches
-    ctx.fillStyle = PALETTE[0]; // pale linen tunic
-    ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-    // Emerald sage herbalist sashes crossed across chest (#55796f)
-    ctx.fillStyle = PALETTE[7];
-    ctx.fillRect(lungeX - 3, torsoY + 1, 6, 2);
-    ctx.fillRect(lungeX - 2, torsoY + 3, 5, 2);
-    ctx.fillRect(lungeX - 4, torsoY + 5, 8, 2);
-    // Leather apothecary satchel & potion vial on hip
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(lungeX - 5, torsoY + 6, 2, 3);
-    ctx.fillStyle = PALETTE[8]; // green healing vial
-    ctx.fillRect(lungeX + 3, torsoY + 6, 2, 3);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(lungeX + 3, torsoY + 5, 1, 1);
-  } else if (heroType === 'zuzubu') {
-    // ZUZUBU: Tall muscular Ethiopian warrior, spotted leopard skin loincloth, bronze torc
-    ctx.fillStyle = PALETTE[5]; // dark muscular athletic skin tone (#3f363b)
-    ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-    ctx.fillStyle = PALETTE[9]; // pectoral contour
-    ctx.fillRect(lungeX - 3, torsoY + 2, 2, 3);
-    ctx.fillRect(lungeX + 1, torsoY + 2, 2, 3);
-    // Polished bronze torc around neck
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(lungeX - 3, torsoY - 1, 6, 2);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(lungeX - 1, torsoY - 1, 2, 1);
-    // SPOTTED LEOPARD SKIN LOINCLOTH (#cb9f6b sand ochre base with dark rosettes #3f363b)
-    ctx.fillStyle = PALETTE[1]; // leopard base
-    ctx.fillRect(lungeX - 4, torsoY + 6, 8, 4);
-    // Leopard dark spots / rosettes
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(lungeX - 3, torsoY + 7, 2, 1);
-    ctx.fillRect(lungeX + 1, torsoY + 7, 1, 2);
-    ctx.fillRect(lungeX - 1, torsoY + 8, 2, 1);
-    ctx.fillRect(lungeX + 2, torsoY + 9, 2, 1);
-  } else if (culture === 'roman') {
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Bare chest / simple leather tunic
-      ctx.fillStyle = PALETTE[1]; // bare chest skin
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[14]; // raw umber leather kilt
-      ctx.fillRect(lungeX - 4, torsoY + 6, 8, 3);
-      ctx.fillStyle = PALETTE[5]; // thin leather belt
-      ctx.fillRect(lungeX - 3, torsoY + 5, 6, 1);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Bronze pectoral disc over tunic
-      ctx.fillStyle = PALETTE[3]; // crimson sub-tunic
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[15]; // bronze pectoral plate
-      ctx.fillRect(lungeX - 2, torsoY + 1, 5, 5);
-      ctx.fillStyle = PALETTE[0]; // bronze glint
-      ctx.fillRect(lungeX, torsoY + 2, 2, 2);
-      ctx.fillStyle = PALETTE[14]; // leather belt
-      ctx.fillRect(lungeX - 3, torsoY + 7, 6, 2);
-    } else if (clampedLvl === 3) {
-      // Level III (Centurion): Segmented lorica segmentata plate & brass bands
-      ctx.fillStyle = PALETTE[5]; // dark iron
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[15]; // bronze bands
-      ctx.fillRect(lungeX - 4, torsoY + 2, 8, 1);
-      ctx.fillRect(lungeX - 4, torsoY + 5, 8, 1);
-      ctx.fillStyle = PALETTE[1]; // ochre belt
-      ctx.fillRect(lungeX - 3, torsoY + 7, 6, 2);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Heavy decorated bronze cuirass with banded shoulder pauldrons
-      ctx.fillStyle = PALETTE[15]; // bronze cuirass
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[5]; // muscle contours & dark trim
-      ctx.fillRect(lungeX - 2, torsoY + 2, 4, 4);
-      ctx.fillStyle = PALETTE[0]; // golden specular
-      ctx.fillRect(lungeX - 3, torsoY + 1, 2, 2);
-      ctx.fillRect(lungeX + 1, torsoY + 1, 2, 2);
-      // Banded pauldrons
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 6, torsoY - 1, 2, 4);
-      ctx.fillRect(lungeX + 4, torsoY - 1, 2, 4);
-      ctx.fillStyle = PALETTE[3]; // crimson pteruges
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    } else {
-      // Level V (Legend): Masterwork gilded lorica, double winged pauldrons, glowing gold gorget
-      ctx.fillStyle = PALETTE[15]; // golden plate
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[0]; // gleaming masterwork gold
-      ctx.fillRect(lungeX - 3, torsoY + 1, 6, 5);
-      ctx.fillStyle = PALETTE[3]; // imperial crimson sash
-      ctx.fillRect(lungeX - 3, torsoY + 3, 6, 2);
-      // Gilded winged pauldrons
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 6, torsoY - 2, 3, 5);
-      ctx.fillRect(lungeX + 4, torsoY - 2, 3, 5);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 5, torsoY - 1, 2, 3);
-      ctx.fillRect(lungeX + 4, torsoY - 1, 2, 3);
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    }
-  } else if (culture === 'celt') {
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Bare chest with woad paint, simple kilt
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[7]; // woad
-      ctx.fillRect(lungeX - 3, torsoY + 2, 6, 2);
-      ctx.fillStyle = PALETTE[14]; // rough kilt
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 3);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Bare chest with woad, bronze torc, terracotta kilt
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[7];
-      ctx.fillRect(lungeX - 3, torsoY + 2, 6, 2);
-      ctx.fillRect(lungeX - 1, torsoY + 4, 3, 2);
-      ctx.fillStyle = PALETTE[2];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 3);
-      ctx.fillStyle = PALETTE[15]; // bronze torc
-      ctx.fillRect(lungeX - 2, torsoY - 1, 4, 1);
-    } else if (clampedLvl === 3) {
-      // Level III (Warmaster): Bronze pectoral plate over woad, thick gold torc
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[15]; // bronze pectoral
-      ctx.fillRect(lungeX - 3, torsoY + 1, 6, 5);
-      ctx.fillStyle = PALETTE[0]; // gold torc
-      ctx.fillRect(lungeX - 3, torsoY - 1, 6, 2);
-      ctx.fillStyle = PALETTE[7]; // woad arms
-      ctx.fillRect(lungeX - 4, torsoY + 6, 2, 2);
-      ctx.fillRect(lungeX + 2, torsoY + 6, 2, 2);
-      ctx.fillStyle = PALETTE[2];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 3);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Chainmail hauberk, bronze pauldrons, heavy torc
-      ctx.fillStyle = PALETTE[6]; // iron chainmail
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[11]; // steel ring glint
-      ctx.fillRect(lungeX - 3, torsoY + 2, 6, 4);
-      ctx.fillStyle = PALETTE[15]; // heavy gold torc
-      ctx.fillRect(lungeX - 3, torsoY - 1, 6, 2);
-      // Bronze shoulder plates
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 6, torsoY, 2, 4);
-      ctx.fillRect(lungeX + 4, torsoY, 2, 4);
-      ctx.fillStyle = PALETTE[14]; // heavy belt
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    } else {
-      // Level V (Legend): Masterwork gold ringmail, royal tartan mantle, radiant gold torc
-      ctx.fillStyle = PALETTE[15]; // gold ringmail
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[0]; // gilded rings
-      ctx.fillRect(lungeX - 3, torsoY + 2, 6, 4);
-      ctx.fillStyle = PALETTE[4]; // royal tartan mantle
-      ctx.fillRect(lungeX - 5, torsoY - 1, 3, 5);
-      ctx.fillRect(lungeX + 3, torsoY - 1, 3, 5);
-      ctx.fillStyle = PALETTE[0]; // radiant torc
-      ctx.fillRect(lungeX - 3, torsoY - 2, 6, 2);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    }
-  } else if (culture === 'berber') {
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Simple desert sand tunic
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 3, torsoY, 7, 9);
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 3, torsoY + 6, 7, 2);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Sand tunic & burgundy sash with leather strap
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 3, torsoY, 7, 9);
-      ctx.fillStyle = PALETTE[4]; // wine sash
-      ctx.fillRect(lungeX - 3, torsoY + 5, 7, 3);
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 2, torsoY + 1, 5, 2);
-      ctx.fillStyle = PALETTE[15]; // bronze medallion
-      ctx.fillRect(lungeX - 1, torsoY + 2, 2, 2);
-    } else if (clampedLvl === 3) {
-      // Level III (Chieftain): Bronze scale brigandine vest over tunic
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 3, torsoY, 7, 9);
-      ctx.fillStyle = PALETTE[15]; // bronze scales
-      ctx.fillRect(lungeX - 3, torsoY + 1, 7, 5);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX - 2, torsoY + 2, 5, 1);
-      ctx.fillRect(lungeX - 2, torsoY + 4, 5, 1);
-      ctx.fillStyle = PALETTE[4];
-      ctx.fillRect(lungeX - 3, torsoY + 6, 7, 2);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Polished bronze cuirass with solar disc & shoulder scales
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[0]; // solar disc
-      ctx.fillRect(lungeX - 1, torsoY + 2, 3, 3);
-      ctx.fillStyle = PALETTE[15]; // shoulder flaps
-      ctx.fillRect(lungeX - 5, torsoY, 2, 4);
-      ctx.fillRect(lungeX + 4, torsoY, 2, 4);
-      ctx.fillStyle = PALETTE[4];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    } else {
-      // Level V (Legend): Masterwork gilded desert cuirass, royal purple sash, gold pauldrons
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[0]; // gilded filigree
-      ctx.fillRect(lungeX - 3, torsoY + 1, 6, 5);
-      ctx.fillStyle = PALETTE[4]; // royal purple sash
-      ctx.fillRect(lungeX - 3, torsoY + 5, 6, 2);
-      ctx.fillStyle = PALETTE[0]; // winged gold pauldrons
-      ctx.fillRect(lungeX - 6, torsoY - 1, 3, 4);
-      ctx.fillRect(lungeX + 4, torsoY - 1, 3, 4);
-    }
-  } else if (culture === 'scythian') {
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Plain sage tunic
-      ctx.fillStyle = PALETTE[8];
-      ctx.fillRect(lungeX - 3, torsoY, 7, 9);
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 2, torsoY + 6, 5, 1);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Sage kaftan with bronze clasps & mossy trim
-      ctx.fillStyle = PALETTE[8];
-      ctx.fillRect(lungeX - 3, torsoY, 7, 9);
-      ctx.fillStyle = PALETTE[12];
-      ctx.fillRect(lungeX - 1, torsoY, 2, 9);
-      ctx.fillStyle = PALETTE[15]; // bronze discs
-      ctx.fillRect(lungeX - 1, torsoY + 2, 2, 2);
-      ctx.fillRect(lungeX - 1, torsoY + 5, 2, 2);
-    } else if (clampedLvl === 3) {
-      // Level III (Warmaster): Iron & bronze scale cuirass
-      ctx.fillStyle = PALETTE[8];
-      ctx.fillRect(lungeX - 3, torsoY, 7, 9);
-      ctx.fillStyle = PALETTE[5]; // iron scales
-      ctx.fillRect(lungeX - 3, torsoY + 1, 7, 5);
-      ctx.fillStyle = PALETTE[15]; // bronze scale accents
-      ctx.fillRect(lungeX - 2, torsoY + 2, 5, 1);
-      ctx.fillRect(lungeX - 2, torsoY + 4, 5, 1);
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 3, torsoY + 7, 7, 2);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Heavy fish-scale armor, decorated bronze gorget, curved shoulder guards
-      ctx.fillStyle = PALETTE[15]; // bronze scale cuirass
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[0]; // gold specular
-      ctx.fillRect(lungeX - 2, torsoY + 2, 4, 3);
-      ctx.fillStyle = PALETTE[15]; // shoulder guards
-      ctx.fillRect(lungeX - 5, torsoY, 2, 4);
-      ctx.fillRect(lungeX + 4, torsoY, 2, 4);
-      ctx.fillStyle = PALETTE[3]; // crimson belt
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    } else {
-      // Level V (Legend): Masterwork golden kurgan scale coat with stag pectoral & radiant pauldrons
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[0]; // radiant gold scales
-      ctx.fillRect(lungeX - 3, torsoY + 1, 6, 6);
-      ctx.fillStyle = PALETTE[3]; // stag pectoral accent
-      ctx.fillRect(lungeX - 1, torsoY + 2, 2, 2);
-      ctx.fillStyle = PALETTE[0]; // gilded curved pauldrons
-      ctx.fillRect(lungeX - 6, torsoY - 1, 3, 5);
-      ctx.fillRect(lungeX + 4, torsoY - 1, 3, 5);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    }
-  } else {
-    // Hunnic:
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Animal pelt coat
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX - 3, torsoY + 6, 6, 2);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Hardened leather coat with iron studs
-      ctx.fillStyle = PALETTE[9];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[11]; // iron studs
-      ctx.fillRect(lungeX - 2, torsoY + 2, 1, 1);
-      ctx.fillRect(lungeX + 1, torsoY + 2, 1, 1);
-      ctx.fillRect(lungeX - 2, torsoY + 4, 1, 1);
-      ctx.fillRect(lungeX + 1, torsoY + 4, 1, 1);
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    } else if (clampedLvl === 3) {
-      // Level III (Warmaster): Dark iron lamellar plates
-      ctx.fillStyle = PALETTE[9];
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[5]; // dark iron lamellar
-      ctx.fillRect(lungeX - 3, torsoY + 1, 6, 3);
-      ctx.fillRect(lungeX - 3, torsoY + 5, 6, 3);
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Reinforced iron lamellar, bronze rivets, studded shoulder guards
-      ctx.fillStyle = PALETTE[5]; // blackened iron
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[15]; // bronze rivets
-      ctx.fillRect(lungeX - 2, torsoY + 2, 1, 1);
-      ctx.fillRect(lungeX + 1, torsoY + 2, 1, 1);
-      ctx.fillRect(lungeX - 2, torsoY + 5, 1, 1);
-      ctx.fillRect(lungeX + 1, torsoY + 5, 1, 1);
-      // Studded shoulder guards
-      ctx.fillStyle = PALETTE[9];
-      ctx.fillRect(lungeX - 5, torsoY, 2, 4);
-      ctx.fillRect(lungeX + 4, torsoY, 2, 4);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 5, torsoY + 1, 1, 1);
-      ctx.fillRect(lungeX + 5, torsoY + 1, 1, 1);
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 4, torsoY + 7, 8, 2);
-    } else {
-      // Level V (Legend): Masterwork warlord dread armor, golden wolf gorget, spiked pauldrons
-      ctx.fillStyle = PALETTE[5]; // blackened steel
-      ctx.fillRect(lungeX - 4, torsoY, 8, 9);
-      ctx.fillStyle = PALETTE[0]; // gold wolf gorget
-      ctx.fillRect(lungeX - 3, torsoY + 1, 6, 3);
-      ctx.fillStyle = PALETTE[15]; // golden rivets
-      ctx.fillRect(lungeX - 3, torsoY + 4, 6, 3);
-      // Spiked golden pauldrons
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 6, torsoY - 1, 3, 5);
-      ctx.fillRect(lungeX + 4, torsoY - 1, 3, 5);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 7, torsoY, 1, 2);
-      ctx.fillRect(lungeX + 7, torsoY, 1, 2);
-    }
-  }
-
-  // 3. HEAD & HELMET (EVOLVES PER LEVEL AND CULTURE, OR UNIQUE HERO SPRITES)
-  if (isWhiteFlash) {
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(lungeX - 3, headY, 6, 7);
-  } else if (isRedFlash) {
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(lungeX - 3, headY, 6, 7);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(lungeX, headY + 3, 2, 1);
-  } else if (heroType === 'beastmaster') {
-    // Beastmaster head: wild shaggy hair, animal tooth headband, face warpaint
-    ctx.fillStyle = PALETTE[1]; // skin
-    ctx.fillRect(lungeX - 3, headY + 2, 6, 5);
-    ctx.fillStyle = PALETTE[14]; // wild shaggy dark brown hair
-    ctx.fillRect(lungeX - 4, headY, 8, 3);
-    ctx.fillRect(lungeX - 4, headY + 2, 2, 4);
-    // Leather headband with predator teeth
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(lungeX - 3, headY + 1, 6, 1);
-    ctx.fillStyle = PALETTE[0]; // teeth
-    ctx.fillRect(lungeX - 2, headY, 1, 2);
-    ctx.fillRect(lungeX + 1, headY, 1, 2);
-    ctx.fillStyle = PALETTE[3]; // crimson cheek warpaint
-    ctx.fillRect(lungeX - 2, headY + 4, 1, 2);
-    ctx.fillRect(lungeX + 2, headY + 4, 1, 2);
-    ctx.fillStyle = PALETTE[5]; // eyes
-    ctx.fillRect(lungeX + 1, headY + 3, 1, 1);
-  } else if (heroType === 'saladin') {
-    // Saladin the Medic: Elegant desert turban with emerald green jewel clasp
-    ctx.fillStyle = PALETTE[0]; // white linen turban
-    ctx.fillRect(lungeX - 4, headY - 2, 8, 6);
-    ctx.fillStyle = PALETTE[1]; // turban shadow folds
-    ctx.fillRect(lungeX - 3, headY - 1, 6, 2);
-    // Emerald jewel clasp at forehead center
-    ctx.fillStyle = PALETTE[7]; // emerald
-    ctx.fillRect(lungeX - 1, headY - 1, 2, 2);
-    ctx.fillStyle = PALETTE[0]; // glint
-    ctx.fillRect(lungeX, headY - 1, 1, 1);
-    ctx.fillStyle = PALETTE[1]; // face skin
-    ctx.fillRect(lungeX - 2, headY + 3, 5, 4);
-    ctx.fillStyle = PALETTE[9]; // trimmed philosopher beard
-    ctx.fillRect(lungeX - 2, headY + 6, 5, 2);
-    ctx.fillStyle = PALETTE[5]; // eyes
-    ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-  } else if (heroType === 'zuzubu') {
-    // Zuzubu: Ethiopian champion head, close cropped dark hair, fierce eyes, bronze browband
-    ctx.fillStyle = PALETTE[5]; // dark skin tone
-    ctx.fillRect(lungeX - 3, headY + 2, 6, 5);
-    ctx.fillStyle = PALETTE[9];
-    ctx.fillRect(lungeX - 3, headY, 6, 3);
-    // Bronze browband
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(lungeX - 3, headY + 1, 6, 1);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(lungeX, headY + 1, 2, 1);
-    // Piercing eyes
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(lungeX + 1, headY + 3, 2, 1);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(lungeX + 1, headY + 3, 1, 1);
-  } else if (culture === 'roman') {
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Bare head / simple leather browband, open face
-      ctx.fillStyle = PALETTE[1]; // skin
-      ctx.fillRect(lungeX - 3, headY + 2, 6, 5);
-      ctx.fillStyle = PALETTE[9]; // dark hair
-      ctx.fillRect(lungeX - 3, headY, 6, 2);
-      ctx.fillStyle = PALETTE[14]; // leather band
-      ctx.fillRect(lungeX - 3, headY + 2, 6, 1);
-      ctx.fillStyle = PALETTE[5]; // eyes
-      ctx.fillRect(lungeX + 1, headY + 3, 1, 1);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Open bronze helmet with simple low ridge
-      ctx.fillStyle = PALETTE[15]; // bronze helmet
-      ctx.fillRect(lungeX - 3, headY - 1, 6, 5);
-      ctx.fillStyle = PALETTE[5]; // ridge
-      ctx.fillRect(lungeX - 1, headY - 3, 3, 2);
-      ctx.fillStyle = PALETTE[1]; // open face
-      ctx.fillRect(lungeX - 2, headY + 3, 5, 4);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 3) {
-      // Level III (Centurion): Cheek-guarded bronze helm, small crimson crest
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 3, headY, 6, 7);
-      ctx.fillStyle = PALETTE[5]; // visor slit
-      ctx.fillRect(lungeX, headY + 3, 3, 1);
-      // Crimson crest
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(lungeX - 2, headY - 4, 5, 4);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 1, headY - 5, 3, 1);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Heavy murmillo helmet, face grille, tall ornate crest
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, headY - 1, 8, 8);
-      ctx.fillStyle = PALETTE[5]; // face grate
-      ctx.fillRect(lungeX, headY + 2, 3, 3);
-      // Tall ornate crest
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(lungeX - 3, headY - 6, 7, 5);
-      ctx.fillStyle = PALETTE[0]; // gilded crest ridge
-      ctx.fillRect(lungeX - 2, headY - 7, 5, 2);
-    } else {
-      // Level V (Legend): Masterwork gilded murmillo helm, triple plumes (crimson/gold/white)
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, headY - 1, 8, 8);
-      ctx.fillStyle = PALETTE[0]; // gilded face grille & laurel
-      ctx.fillRect(lungeX - 4, headY + 1, 8, 1);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX, headY + 2, 3, 3);
-      // Triple gilded plumes
-      ctx.fillStyle = PALETTE[3]; // crimson center plume
-      ctx.fillRect(lungeX - 2, headY - 8, 5, 7);
-      ctx.fillStyle = PALETTE[15]; // left & right gold plumes
-      ctx.fillRect(lungeX - 5, headY - 6, 3, 5);
-      ctx.fillRect(lungeX + 3, headY - 6, 3, 5);
-      ctx.fillStyle = PALETTE[0]; // radiant white-hot tips
-      ctx.fillRect(lungeX - 2, headY - 9, 5, 2);
-      ctx.fillRect(lungeX - 5, headY - 7, 2, 2);
-      ctx.fillRect(lungeX + 4, headY - 7, 2, 2);
-    }
-  } else if (culture === 'celt') {
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Wild hair, simple rope band
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 3, headY + 2, 6, 5);
-      ctx.fillStyle = PALETTE[15]; // wild hair
-      ctx.fillRect(lungeX - 3, headY, 6, 3);
-      ctx.fillRect(lungeX - 4, headY + 2, 2, 4);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 3, 1, 1);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Bronze brow band over hair
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 3, headY + 2, 6, 5);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 3, headY - 1, 6, 3);
-      ctx.fillStyle = PALETTE[0]; // bronze brow band
-      ctx.fillRect(lungeX - 3, headY + 1, 6, 1);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 3, 1, 1);
-    } else if (clampedLvl === 3) {
-      // Level III (Warmaster): Conical bronze helmet with cheek flaps
-      ctx.fillStyle = PALETTE[15]; // bronze helmet
-      ctx.fillRect(lungeX - 3, headY, 6, 4);
-      ctx.fillRect(lungeX - 2, headY - 3, 4, 3);
-      ctx.fillStyle = PALETTE[1]; // face
-      ctx.fillRect(lungeX - 2, headY + 4, 5, 3);
-      ctx.fillStyle = PALETTE[15]; // cheek flaps
-      ctx.fillRect(lungeX - 3, headY + 3, 1, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Horned bronze war-helmet
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 3, headY - 1, 6, 5);
-      // Twin horns
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 5, headY - 5, 2, 4);
-      ctx.fillRect(lungeX + 4, headY - 5, 2, 4);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, headY - 2, 2, 2);
-      ctx.fillRect(lungeX + 3, headY - 2, 2, 2);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 2, headY + 4, 5, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else {
-      // Level V (Legend): Masterwork winged crown-helm with triple gilded horns
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 3, headY - 2, 6, 6);
-      ctx.fillStyle = PALETTE[0]; // crown ridge
-      ctx.fillRect(lungeX - 3, headY - 4, 6, 2);
-      // Triple horns
-      ctx.fillRect(lungeX - 6, headY - 7, 2, 6);
-      ctx.fillRect(lungeX + 5, headY - 7, 2, 6);
-      ctx.fillRect(lungeX - 1, headY - 7, 2, 4);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 2, headY + 4, 5, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    }
-  } else if (culture === 'berber') {
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Simple linen wrap
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 3, headY, 6, 4);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 2, headY + 3, 5, 4);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Turban wrap with bronze brow clasp
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 4, headY - 2, 8, 6);
-      ctx.fillStyle = PALETTE[14]; // brow strap
-      ctx.fillRect(lungeX - 4, headY + 1, 8, 1);
-      ctx.fillStyle = PALETTE[15]; // bronze clasp
-      ctx.fillRect(lungeX, headY + 1, 2, 1);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 2, headY + 2, 5, 4);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 3, 1, 1);
-    } else if (clampedLvl === 3) {
-      // Level III (Chieftain): Desert helm under turban with chain coif veil
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 4, headY - 2, 8, 5);
-      ctx.fillStyle = PALETTE[15]; // bronze crest dome
-      ctx.fillRect(lungeX - 2, headY - 4, 4, 2);
-      ctx.fillStyle = PALETTE[5]; // chain coif veil
-      ctx.fillRect(lungeX - 3, headY + 2, 6, 5);
-      ctx.fillStyle = PALETTE[1]; // eyes opening
-      ctx.fillRect(lungeX - 1, headY + 3, 4, 2);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 3, 1, 1);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Sculpted bronze desert helm with eagle crest & silk plume
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, headY - 3, 8, 6);
-      ctx.fillStyle = PALETTE[0]; // eagle brow
-      ctx.fillRect(lungeX - 1, headY - 4, 3, 2);
-      ctx.fillStyle = PALETTE[4]; // silk crest
-      ctx.fillRect(lungeX - 3, headY - 5, 6, 2);
-      ctx.fillStyle = PALETTE[5]; // chain veil
-      ctx.fillRect(lungeX - 3, headY + 3, 6, 4);
-    } else {
-      // Level V (Legend): Masterwork sultan-helm with triple towering silk plumes & gold face veil
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, headY - 3, 8, 6);
-      ctx.fillStyle = PALETTE[0]; // gold face veil
-      ctx.fillRect(lungeX - 3, headY + 1, 6, 6);
-      // Triple silk plumes (crimson/gold/white)
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(lungeX - 1, headY - 8, 3, 6);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX - 4, headY - 6, 3, 4);
-      ctx.fillRect(lungeX + 2, headY - 6, 3, 4);
-    }
-  } else if (culture === 'scythian') {
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Simple pointed leather bashlyk cap
-      ctx.fillStyle = PALETTE[8];
-      ctx.fillRect(lungeX - 3, headY + 1, 6, 5);
-      ctx.fillRect(lungeX - 2, headY - 2, 4, 3);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 1, headY + 3, 4, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Pointed cap with bronze brow band
-      ctx.fillStyle = PALETTE[8];
-      ctx.fillRect(lungeX - 3, headY + 1, 6, 6);
-      ctx.fillRect(lungeX - 2, headY - 3, 4, 4);
-      ctx.fillRect(lungeX - 1, headY - 5, 2, 2);
-      ctx.fillStyle = PALETTE[15]; // gold trim
-      ctx.fillRect(lungeX - 3, headY + 2, 6, 1);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 1, headY + 3, 4, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 3) {
-      // Level III (Warmaster): Bronze-plated steppe helm with cheek guards
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 3, headY, 6, 6);
-      ctx.fillRect(lungeX - 2, headY - 3, 4, 4);
-      ctx.fillRect(lungeX - 1, headY - 5, 2, 3);
-      ctx.fillStyle = PALETTE[15]; // cheek flaps
-      ctx.fillRect(lungeX - 4, headY + 2, 2, 4);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 1, headY + 3, 4, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Ornate bronze steppe helm, gold sun-disk & horsehair tail
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 3, headY - 1, 6, 7);
-      ctx.fillRect(lungeX - 2, headY - 5, 4, 4);
-      ctx.fillStyle = PALETTE[0]; // sun-disk
-      ctx.fillRect(lungeX - 1, headY - 4, 2, 2);
-      ctx.fillStyle = PALETTE[3]; // horsehair tail
-      ctx.fillRect(lungeX + 2, headY - 4, 2, 6);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 1, headY + 3, 4, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else {
-      // Level V (Legend): Masterwork towering gilded kurgan crown-helm, triple golden plumes, stag horns
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 4, headY - 2, 8, 8);
-      ctx.fillStyle = PALETTE[0]; // gilded crown dome
-      ctx.fillRect(lungeX - 3, headY - 6, 6, 5);
-      // Stag horn prongs
-      ctx.fillRect(lungeX - 5, headY - 8, 2, 4);
-      ctx.fillRect(lungeX + 4, headY - 8, 2, 4);
-      ctx.fillRect(lungeX - 1, headY - 9, 2, 4);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 1, headY + 3, 4, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    }
-  } else {
-    // Hunnic:
-    if (clampedLvl === 1) {
-      // Level I (Recruit): Simple fur skullcap
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 3, headY, 6, 4);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 2, headY + 3, 5, 4);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 2) {
-      // Level II (Veteran): Fur-lined iron skullcap
-      ctx.fillStyle = PALETTE[14]; // fur trim
-      ctx.fillRect(lungeX - 4, headY + 1, 8, 3);
-      ctx.fillStyle = PALETTE[5]; // iron dome
-      ctx.fillRect(lungeX - 3, headY - 2, 6, 3);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 2, headY + 3, 5, 4);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 3) {
-      // Level III (Warmaster): Conical iron spangenhelm with cheek flaps
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX - 3, headY - 2, 6, 5);
-      ctx.fillRect(lungeX - 2, headY - 4, 4, 3);
-      ctx.fillStyle = PALETTE[11]; // spangen bands
-      ctx.fillRect(lungeX - 1, headY - 3, 2, 4);
-      ctx.fillStyle = PALETTE[14]; // fur cheek flaps
-      ctx.fillRect(lungeX - 4, headY + 2, 2, 4);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 2, headY + 3, 5, 4);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX + 1, headY + 4, 1, 1);
-    } else if (clampedLvl === 4) {
-      // Level IV (Champion): Heavy horned dread-helm with iron face guard
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lungeX - 4, headY - 2, 8, 6);
-      ctx.fillStyle = PALETTE[11]; // horns
-      ctx.fillRect(lungeX - 5, headY - 5, 2, 4);
-      ctx.fillRect(lungeX + 4, headY - 5, 2, 4);
-      ctx.fillStyle = PALETTE[0]; // horsehair plume
-      ctx.fillRect(lungeX - 1, headY - 5, 2, 4);
-      ctx.fillStyle = PALETTE[5]; // iron face guard
-      ctx.fillRect(lungeX - 2, headY + 3, 5, 4);
-      ctx.fillStyle = PALETTE[0]; // eyes slit
-      ctx.fillRect(lungeX, headY + 4, 2, 1);
-    } else {
-      // Level V (Legend): Masterwork golden khagan helm, wolf mask, triple standards
-      ctx.fillStyle = PALETTE[15]; // gold dome
-      ctx.fillRect(lungeX - 4, headY - 3, 8, 7);
-      ctx.fillStyle = PALETTE[0]; // gold horns & mask
-      ctx.fillRect(lungeX - 6, headY - 7, 2, 5);
-      ctx.fillRect(lungeX + 5, headY - 7, 2, 5);
-      ctx.fillRect(lungeX - 3, headY + 2, 6, 4);
-      ctx.fillStyle = PALETTE[5]; // wolf eyes
-      ctx.fillRect(lungeX - 1, headY + 3, 1, 1);
-      ctx.fillRect(lungeX + 2, headY + 3, 1, 1);
-      // Triple horse-tail standards
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lungeX - 1, headY - 8, 2, 5);
-    }
-  }
-
-  // 4. WEAPONS & SHIELDS (STRICT LEFT-HAND AND RIGHT-HAND ANCHOR POSITIONS)
-  // Left Hand Anchor: (lungeX - 5, torsoY + 4)
-  // Right Hand Anchor: (lungeX + 3, torsoY + 2)
-  const isStriking = state === 'attack' || state === 'sparring' || state === 'pinning';
-  const lx = lungeX - 5;
-  const ly = torsoY + 4;
-  const rx = lungeX + 3;
-  const ry = torsoY + 2;
-
-  if (state === 'pinned') {
-    // Upright struggling hands/arms in defensive hold / grapple struggle
-    ctx.fillStyle = isRedFlash ? PALETTE[3] : PALETTE[1];
-    ctx.fillRect(lungeX - 4, torsoY + 2, 2, 6);
-    ctx.fillRect(lungeX + 2, torsoY + 1, 2, 6);
-    ctx.fillStyle = isRedFlash ? PALETTE[4] : PALETTE[14];
-    ctx.fillRect(lungeX - 4, torsoY + 4, 2, 2);
-    ctx.fillRect(lungeX + 2, torsoY + 3, 2, 2);
-
-    if (Math.floor(animTimer * 15) % 2 === 0) {
-      ctx.fillStyle = isRedFlash ? PALETTE[0] : PALETTE[3];
-      ctx.fillRect(lungeX - 4, headY - 1, 1, 2);
-      ctx.fillRect(lungeX + 3, headY - 2, 1, 2);
-    }
-
-    // Grapple sand dust at feet
-    const dustStep = Math.floor(safeAnim * 15) % 2 === 0;
-    ctx.fillStyle = dustStep ? PALETTE[1] : PALETTE[2];
-    ctx.fillRect(-5, 0, 3, 1);
-    ctx.fillRect(3, 0, 2, 1);
-  } else if (!isWhiteFlash && heroType) {
-    // UNIQUE WEAPONS RENDERING FOR NAMED HEROES
-    if (heroType === 'beastmaster') {
-      // Beastmaster: Spiked iron flail & leather beast whip in right hand, leather brace on left
-      // Left arm/hand:
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(lx - 2, ly - 1, 3, 5);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(lx - 1, ly + 2, 2, 2);
-
-      // Right arm/hand: Spiked flail / whip
-      if (isStriking) {
-        ctx.fillStyle = PALETTE[14]; // whip handle
-        ctx.fillRect(rx - 1, ry + 1, 3, 2);
-        ctx.fillStyle = PALETTE[5]; // whip lash extending forward
-        ctx.fillRect(rx + 2, ry, 11, 2);
-        ctx.fillRect(rx + 11, ry - 3, 2, 5);
-        ctx.fillStyle = PALETTE[11]; // spiked flail head
-        ctx.fillRect(rx + 13, ry - 4, 3, 3);
-        ctx.fillStyle = PALETTE[0];
-        ctx.fillRect(rx + 14, ry - 5, 1, 1);
-      } else {
-        ctx.fillStyle = PALETTE[14];
-        ctx.fillRect(rx, ry + 1, 2, 3);
-        ctx.fillStyle = PALETTE[5]; // coiled whip down hip
-        ctx.fillRect(rx + 1, ry + 4, 2, 6);
-        ctx.fillRect(rx, ry + 9, 3, 2);
-        ctx.fillRect(rx - 2, ry + 7, 2, 3);
-        ctx.fillStyle = PALETTE[11]; // spiked head
-        ctx.fillRect(rx - 3, ry + 6, 2, 2);
-      }
-    } else if (heroType === 'saladin') {
-      // Saladin: Bronze Caduceus staff in right hand, Herbalist tome in left hand
-      // Left hand: Herbalist tome / scroll
-      ctx.fillStyle = PALETTE[14]; // leather book
-      ctx.fillRect(lx - 2, ly - 1, 4, 6);
-      ctx.fillStyle = PALETTE[0];  // parchment pages
-      ctx.fillRect(lx - 1, ly, 2, 4);
-      ctx.fillStyle = PALETTE[7];  // emerald ribbon bookmark
-      ctx.fillRect(lx, ly + 4, 1, 3);
-
-      // Right hand: Bronze Caduceus healing staff
-      ctx.fillStyle = PALETTE[15]; // bronze shaft
-      ctx.fillRect(rx, ry - 14, 2, 22);
-      // Twin coiled serpents at top
-      ctx.fillStyle = PALETTE[7]; // emerald serpent body
-      ctx.fillRect(rx - 2, ry - 12, 6, 2);
-      ctx.fillRect(rx - 3, ry - 9, 8, 2);
-      ctx.fillStyle = PALETTE[0]; // golden wings & top sphere
-      ctx.fillRect(rx - 4, ry - 16, 10, 2);
-      ctx.fillRect(rx - 1, ry - 18, 4, 3);
-      ctx.fillRect(rx, ry - 19, 2, 2);
-
-      // Soothing healing sparkle trail
-      if (Math.floor(animTimer * 6) % 2 === 0) {
-        ctx.fillStyle = '#4ade80';
-        ctx.fillRect(rx + 3, ry - 17, 1, 1);
-        ctx.fillRect(rx - 3, ry - 13, 1, 1);
-      }
-    } else if (heroType === 'zuzubu') {
-      // Zuzubu: Twin curved obsidian/bronze blades
-      // Left hand blade:
-      ctx.fillStyle = PALETTE[15]; // hilt
-      ctx.fillRect(lx - 1, ly, 2, 2);
-      ctx.fillStyle = PALETTE[5];  // obsidian blade
-      ctx.fillRect(lx - 3, ly + 2, 3, 7);
-      ctx.fillRect(lx - 4, ly + 7, 2, 3); // curved forward hook
-      ctx.fillStyle = PALETTE[0];  // razor glint
-      ctx.fillRect(lx - 5, ly + 9, 2, 2);
-
-      // Right hand blade:
-      if (isStriking) {
-        ctx.fillStyle = PALETTE[15];
-        ctx.fillRect(rx, ry + 1, 2, 2);
-        ctx.fillStyle = PALETTE[5];
-        ctx.fillRect(rx + 2, ry, 11, 2);
-        ctx.fillRect(rx + 11, ry - 2, 3, 3);
-        ctx.fillStyle = PALETTE[0];
-        ctx.fillRect(rx + 13, ry - 3, 2, 2);
-
-        // Sweeping slash arc
-        ctx.fillStyle = 'rgba(251, 191, 36, 0.7)';
-        ctx.fillRect(rx + 6, ry - 4, 8, 2);
-      } else {
-        ctx.fillStyle = PALETTE[15];
-        ctx.fillRect(rx, ry + 1, 2, 2);
-        ctx.fillStyle = PALETTE[5];
-        ctx.fillRect(rx + 1, ry - 8, 2, 9);
-        ctx.fillRect(rx + 2, ry - 11, 3, 4); // hooked curve
-        ctx.fillStyle = PALETTE[0];
-        ctx.fillRect(rx + 4, ry - 12, 2, 2);
-      }
-    }
-  } else if (!isWhiteFlash && executionStance?.isExecutioner) {
-    const strikeProg = executionStance.strikeProgress ?? 0;
-    if (strikeProg < 0.5) {
-      // EXECUTION STANCE: Raising weapon upward by a few pixels into execution stance
-      const raiseOffset = Math.round((strikeProg / 0.5) * 6); // 0 to 6 pixels upward
-      ctx.fillStyle = isRedFlash ? PALETTE[3] : PALETTE[1];
-      ctx.fillRect(lungeX - 3, torsoY - 4 - raiseOffset, 2, 7);
-      ctx.fillRect(lungeX + 1, torsoY - 4 - raiseOffset, 2, 7);
-      // Hands clutching hilt above head
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 2, torsoY - 7 - raiseOffset, 4, 3);
-      ctx.fillRect(lungeX - 5, torsoY - 6 - raiseOffset, 10, 2); // crossguard
-      // Blade pointing straight down vertically, poised to plunge!
-      ctx.fillStyle = PALETTE[11];
-      ctx.fillRect(lungeX - 1, torsoY - 18 - raiseOffset, 2, 12);
-      ctx.fillStyle = PALETTE[0]; // gleaming tip
-      ctx.fillRect(lungeX, torsoY - 19 - raiseOffset, 1, 1);
-      ctx.fillRect(lungeX - 1, torsoY - 6 - raiseOffset, 2, 1);
-    } else {
-      // DOWNWARD THRUST: Thrusts the blade straight down into the sand behind the fallen body!
-      ctx.fillStyle = isRedFlash ? PALETTE[3] : PALETTE[1];
-      ctx.fillRect(lungeX - 2, torsoY + 4, 2, 7);
-      ctx.fillRect(lungeX + 1, torsoY + 4, 2, 7);
-      // Hands clutching hilt
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(lungeX - 2, torsoY + 10, 4, 2);
-      ctx.fillRect(lungeX - 5, torsoY + 11, 10, 2);
-      // Blade plunged straight down into the sand behind fallen body
-      ctx.fillStyle = PALETTE[11];
-      ctx.fillRect(lungeX - 1, torsoY + 13, 2, 14);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(lungeX, torsoY + 13, 1, 12);
-      // Blood and sand spray at point of impact in sand
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(lungeX - 3, 0, 7, 2);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(lungeX - 4, -1, 3, 2);
-      ctx.fillRect(lungeX + 3, -1, 3, 2);
-    }
-  } else if (!isWhiteFlash) {
-    const rightId = equipped?.rightHand;
-    const leftId = equipped?.leftHand;
-    const rightItem = rightId ? WEAPON_DATABASE[rightId] : null;
-    const leftItem = leftId ? WEAPON_DATABASE[leftId] : null;
-    const twoHandedItem =
-      (rightItem && rightItem.slotType === 'BOTH' ? rightItem : null) ||
-      (leftItem && leftItem.slotType === 'BOTH' ? leftItem : null);
-
-    if (twoHandedItem) {
-      // DYNAMIC RENDERING: Two-Handed Weapons (BOTH Slots Replaced)
-      if (twoHandedItem.id === 'barbarian_greatclub') {
-        // Barbarian Greatclub (Spiked heavy knotted war club)
-        if (isStriking) {
-          ctx.fillStyle = PALETTE[14]; // hilt
-          ctx.fillRect(rx - 2, torsoY + 2, 4, 3);
-          ctx.fillStyle = PALETTE[5]; // heavy dark oak shaft
-          ctx.fillRect(rx + 2, torsoY - 1, 14, 5);
-          ctx.fillStyle = PALETTE[14]; // wood grain
-          ctx.fillRect(rx + 4, torsoY, 10, 3);
-          // Iron spikes
-          ctx.fillStyle = PALETTE[11];
-          ctx.fillRect(rx + 8, torsoY - 3, 2, 2);
-          ctx.fillRect(rx + 12, torsoY - 3, 2, 2);
-          ctx.fillRect(rx + 10, torsoY + 4, 2, 2);
-          ctx.fillRect(rx + 16, torsoY, 3, 3); // heavy club head
-        } else {
-          ctx.fillStyle = PALETTE[14]; // hilt
-          ctx.fillRect(rx, torsoY - 2, 2, 7);
-          ctx.fillStyle = PALETTE[5]; // club body
-          ctx.fillRect(rx - 1, torsoY - 18, 5, 16);
-          ctx.fillStyle = PALETTE[14]; // wood highlight
-          ctx.fillRect(rx, torsoY - 17, 3, 14);
-          // Iron spikes
-          ctx.fillStyle = PALETTE[11];
-          ctx.fillRect(rx - 3, torsoY - 14, 2, 2);
-          ctx.fillRect(rx + 4, torsoY - 12, 2, 2);
-          ctx.fillRect(rx - 3, torsoY - 8, 2, 2);
-          ctx.fillRect(rx, torsoY - 20, 3, 2); // crown spike
-        }
-      } else if (twoHandedItem.id === 'gastraphetes') {
-        // Roman Repeating Gastraphetes (Crossbow belly-bow)
-        if (isStriking) {
-          ctx.fillStyle = PALETTE[14]; // stock
-          ctx.fillRect(rx - 2, torsoY + 1, 14, 3);
-          ctx.fillStyle = PALETTE[11]; // bow prod
-          ctx.fillRect(rx + 10, torsoY - 5, 2, 13);
-          ctx.fillStyle = PALETTE[0]; // bowstring
-          ctx.fillRect(rx + 2, torsoY - 4, 1, 11);
-          // Bolt loaded
-          ctx.fillStyle = PALETTE[3];
-          ctx.fillRect(rx + 5, torsoY + 2, 6, 1);
-        } else {
-          ctx.fillStyle = PALETTE[14]; // stock
-          ctx.fillRect(rx - 1, torsoY - 12, 3, 18);
-          ctx.fillStyle = PALETTE[11]; // bow prod
-          ctx.fillRect(rx - 6, torsoY - 11, 13, 2);
-          ctx.fillStyle = PALETTE[0]; // bowstring
-          ctx.fillRect(rx - 5, torsoY - 4, 11, 1);
-        }
-      } else if (twoHandedItem.id === 'spiculum') {
-        // Spiculum (Heavy War Spear)
-        if (isStriking) {
-          ctx.fillStyle = PALETTE[14]; // wood shaft
-          ctx.fillRect(lungeX - 4, torsoY + 2, 20, 2);
-          ctx.fillStyle = PALETTE[15]; // bronze socket
-          ctx.fillRect(lungeX + 16, torsoY + 1, 2, 4);
-          ctx.fillStyle = PALETTE[11]; // steel spearpoint
-          ctx.fillRect(lungeX + 18, torsoY + 1, 4, 2);
-          ctx.fillStyle = PALETTE[0]; // gleaming tip
-          ctx.fillRect(lungeX + 22, torsoY + 1, 2, 2);
-          ctx.fillStyle = PALETTE[3]; // red banner tassel
-          ctx.fillRect(lungeX + 14, torsoY + 3, 3, 3);
-        } else {
-          ctx.fillStyle = PALETTE[14];
-          ctx.fillRect(rx - 1, torsoY - 14, 2, 25);
-          ctx.fillStyle = PALETTE[15];
-          ctx.fillRect(rx - 2, torsoY - 16, 4, 3);
-          ctx.fillStyle = PALETTE[11];
-          ctx.fillRect(rx - 2, torsoY - 20, 4, 5);
-          ctx.fillStyle = PALETTE[0];
-          ctx.fillRect(rx - 1, torsoY - 22, 2, 2);
-          ctx.fillStyle = PALETTE[3];
-          ctx.fillRect(rx + 1, torsoY - 14, 3, 3);
-        }
-      } else if (twoHandedItem.id === 'heavy_falx') {
-        // Heavy Falx (Curved Cleaver)
-        if (isStriking) {
-          ctx.fillStyle = PALETTE[14]; // hilt
-          ctx.fillRect(rx - 2, torsoY + 1, 5, 2);
-          ctx.fillStyle = PALETTE[5]; // dark iron back
-          ctx.fillRect(rx + 3, torsoY, 11, 2);
-          ctx.fillStyle = PALETTE[11]; // cutting edge
-          ctx.fillRect(rx + 3, torsoY + 2, 9, 1);
-          ctx.fillRect(rx + 12, torsoY + 2, 3, 4); // hooked cleaver tip
-          ctx.fillStyle = PALETTE[0]; // tip glint
-          ctx.fillRect(rx + 13, torsoY + 5, 2, 2);
-        } else {
-          ctx.fillStyle = PALETTE[14];
-          ctx.fillRect(rx - 1, torsoY - 2, 3, 8);
-          ctx.fillStyle = PALETTE[5];
-          ctx.fillRect(rx - 1, torsoY - 13, 2, 11);
-          ctx.fillStyle = PALETTE[11];
-          ctx.fillRect(rx, torsoY - 14, 2, 12);
-          ctx.fillRect(rx + 2, torsoY - 16, 4, 3); // forward hook
-          ctx.fillStyle = PALETTE[0];
-          ctx.fillRect(rx + 4, torsoY - 17, 2, 2);
-        }
-      } else if (twoHandedItem.id === 'imperial_dragon_standard') {
-        // Imperial Dragon Standard (Relic Battle Standard)
-        if (isStriking) {
-          ctx.fillStyle = PALETTE[14]; // staff
-          ctx.fillRect(lungeX - 4, torsoY + 2, 20, 2);
-          ctx.fillStyle = PALETTE[0];  // golden draco totem head
-          ctx.fillRect(lungeX + 16, torsoY - 2, 5, 5);
-          ctx.fillStyle = PALETTE[3];  // red fluttering dragon tail
-          ctx.fillRect(lungeX + 8, torsoY + 4, 8, 3);
-        } else {
-          ctx.fillStyle = PALETTE[14]; // vertical pole
-          ctx.fillRect(rx - 1, torsoY - 18, 2, 28);
-          ctx.fillStyle = PALETTE[0];  // gilded dragon head
-          ctx.fillRect(rx - 3, torsoY - 22, 6, 5);
-          ctx.fillStyle = PALETTE[3];  // red dragon windsleeve
-          ctx.fillRect(rx + 1, torsoY - 18, 5, 10);
-        }
-      } else {
-        // Imperial Rhomphaia (Master Greatblade)
-        if (isStriking) {
-          ctx.fillStyle = PALETTE[15]; // gold pommel/grip
-          ctx.fillRect(rx - 4, torsoY + 1, 7, 3);
-          ctx.fillStyle = PALETTE[0]; // crossguard
-          ctx.fillRect(rx + 3, torsoY - 1, 2, 7);
-          ctx.fillStyle = PALETTE[11]; // greatblade
-          ctx.fillRect(rx + 5, torsoY + 1, 15, 3);
-          ctx.fillStyle = PALETTE[5]; // fuller
-          ctx.fillRect(rx + 6, torsoY + 2, 12, 1);
-          ctx.fillStyle = PALETTE[0]; // gleaming point
-          ctx.fillRect(rx + 20, torsoY + 2, 3, 1);
-        } else {
-          ctx.fillStyle = PALETTE[15];
-          ctx.fillRect(rx, torsoY - 3, 2, 8);
-          ctx.fillStyle = PALETTE[0];
-          ctx.fillRect(rx - 3, torsoY - 4, 8, 2);
-          ctx.fillStyle = PALETTE[11];
-          ctx.fillRect(rx - 1, torsoY - 20, 4, 16);
-          ctx.fillStyle = PALETTE[5];
-          ctx.fillRect(rx, torsoY - 18, 2, 13);
-          ctx.fillStyle = PALETTE[0];
-          ctx.fillRect(rx, torsoY - 22, 2, 2);
-        }
-      }
-    } else {
-      // DYNAMIC RENDERING: Single-Handed Weapons (Left & Right Hands Replaced Individually)
-
-      // 1. LEFT HAND: Custom Shield/Utility or Culture Default
-      if (leftItem) {
-        if (leftItem.id === 'parmula') {
-          // Parmula (Light Shield, +6 DEF, +4 SPD)
-          ctx.fillStyle = PALETTE[15]; // bronze rim
-          ctx.fillRect(lx - 2, ly - 2, 6, 6);
-          ctx.fillStyle = PALETTE[14]; // leather face
-          ctx.fillRect(lx - 1, ly - 1, 4, 4);
-          ctx.fillStyle = PALETTE[0]; // center golden boss
-          ctx.fillRect(lx, ly, 2, 2);
-        } else if (leftItem.id === 'scutum') {
-          // Scutum (Heavy Tower Shield, +16 DEF)
-          ctx.fillStyle = PALETTE[3]; // crimson face
-          ctx.fillRect(lx - 3, ly - 6, 5, 15);
-          ctx.fillStyle = PALETTE[15]; // bronze boss
-          ctx.fillRect(lx - 2, ly, 3, 3);
-          ctx.fillStyle = PALETTE[0]; // gold trim
-          ctx.fillRect(lx - 3, ly - 6, 5, 1);
-          ctx.fillRect(lx - 3, ly + 8, 5, 1);
-        } else if (leftItem.id === 'rete') {
-          // Rete (Weighted Combat Net, +10 DEF, +15% Pin)
-          ctx.fillStyle = PALETTE[14]; // hemp cord mesh
-          ctx.fillRect(lx - 3, ly - 2, 6, 7);
-          ctx.fillStyle = PALETTE[1];
-          ctx.fillRect(lx - 2, ly - 1, 4, 5);
-          ctx.fillStyle = PALETTE[5];
-          ctx.fillRect(lx - 1, ly, 2, 3);
-          ctx.fillStyle = PALETTE[15]; // lead sinker weights
-          ctx.fillRect(lx - 3, ly + 5, 2, 2);
-          ctx.fillRect(lx + 1, ly + 5, 2, 2);
-        } else if (leftItem.id === 'gilded_tower_aegis') {
-          // Gilded Tower Aegis (Relic Bulwark, +24 DEF, +2 SPD, +20% Pin)
-          ctx.fillStyle = PALETTE[15]; // antique gold rim
-          ctx.fillRect(lx - 3, ly - 6, 6, 15);
-          ctx.fillStyle = PALETTE[0]; // gold leaf face
-          ctx.fillRect(lx - 2, ly - 5, 4, 13);
-          ctx.fillStyle = PALETTE[3]; // crimson imperial eagle boss
-          ctx.fillRect(lx - 1, ly, 2, 3);
-          ctx.fillStyle = PALETTE[0];
-          ctx.fillRect(lx - 2, ly - 1, 4, 1);
-        }
-      } else {
-        // Culture Default Left-Hand Item
-        if (culture === 'roman') {
-          ctx.fillStyle = PALETTE[3];
-          ctx.fillRect(lungeX - 6, torsoY - 1, 4, 15);
-          ctx.fillStyle = clampedLvl >= 4 ? PALETTE[0] : PALETTE[15];
-          ctx.fillRect(lungeX - 5, torsoY + 5, 2, 3);
-          if (clampedLvl >= 4) {
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(lungeX - 6, torsoY - 1, 4, 1);
-            ctx.fillRect(lungeX - 6, torsoY + 13, 4, 1);
-          }
-        } else if (culture === 'celt') {
-          ctx.fillStyle = PALETTE[7];
-          ctx.fillRect(lungeX - 6, torsoY + 1, 4, 10);
-          ctx.fillStyle = clampedLvl >= 4 ? PALETTE[0] : PALETTE[15];
-          ctx.fillRect(lungeX - 5, torsoY + 4, 2, 4);
-        } else if (culture === 'berber') {
-          ctx.fillStyle = clampedLvl >= 4 ? PALETTE[0] : PALETTE[15];
-          ctx.fillRect(lungeX - 5, torsoY + 2, 3, 7);
-          ctx.fillStyle = PALETTE[5];
-          ctx.fillRect(lungeX - 4, torsoY + 4, 1, 3);
-        } else if (culture === 'scythian') {
-          ctx.fillStyle = PALETTE[14];
-          ctx.fillRect(lungeX - 5, torsoY - 2, 1, 12);
-          ctx.fillStyle = clampedLvl >= 4 ? PALETTE[0] : PALETTE[15];
-          ctx.fillRect(lungeX - 4, torsoY - 3, 2, 1);
-          ctx.fillRect(lungeX - 4, torsoY + 10, 2, 1);
-        } else {
-          // hunnic
-          ctx.fillStyle = PALETTE[14];
-          ctx.fillRect(lungeX - 6, torsoY, 4, 11);
-          ctx.fillStyle = clampedLvl >= 4 ? PALETTE[0] : PALETTE[10];
-          ctx.fillRect(lungeX - 6, torsoY, 4, 1);
-          ctx.fillRect(lungeX - 6, torsoY + 10, 4, 1);
-        }
-      }
-
-      // 2. RIGHT HAND: Custom Offensive Weapon or Culture Default
-      if (rightItem) {
-        if (rightItem.id === 'celtic_longsword') {
-          // Celtic Longsword (Broad iron Gallic spatha with sweeping horizontal slash arc)
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[15]; // bronze pommel & crossguard
-            ctx.fillRect(rx - 1, ry + 1, 3, 2);
-            ctx.fillRect(rx + 2, ry - 2, 2, 8);
-            ctx.fillStyle = PALETTE[11]; // broad blade
-            ctx.fillRect(rx + 4, ry, 14, 3);
-            ctx.fillStyle = PALETTE[0]; // gleaming cutting edge & tip
-            ctx.fillRect(rx + 5, ry - 1, 12, 1);
-            ctx.fillRect(rx + 18, ry + 1, 2, 1);
-            // Sweeping horizontal slash arc trail
-            ctx.fillStyle = 'rgba(222, 208, 149, 0.7)';
-            ctx.fillRect(rx + 8, ry - 5, 8, 2);
-            ctx.fillRect(rx + 14, ry - 3, 6, 2);
-            ctx.fillRect(rx + 18, ry - 1, 4, 2);
-          } else {
-            ctx.fillStyle = PALETTE[15]; // pommel & crossguard
-            ctx.fillRect(rx, ry + 1, 2, 4);
-            ctx.fillRect(rx - 2, ry, 6, 2);
-            ctx.fillStyle = PALETTE[11]; // long vertical blade
-            ctx.fillRect(rx, ry - 14, 2, 14);
-            ctx.fillStyle = PALETTE[0]; // edge highlight & tip
-            ctx.fillRect(rx - 1, ry - 13, 1, 13);
-            ctx.fillRect(rx, ry - 15, 2, 1);
-          }
-        } else if (rightItem.id === 'hunting_sling') {
-          // Hunting Sling (Braided cords and stone pouch)
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[14]; // cords whipped forward
-            ctx.fillRect(rx, ry + 2, 8, 1);
-            ctx.fillRect(rx + 8, ry, 3, 3); // pouch
-            ctx.fillStyle = PALETTE[10]; // stone projectile about to launch
-            ctx.fillRect(rx + 11, ry, 2, 2);
-          } else {
-            ctx.fillStyle = PALETTE[14]; // cords dangling from hand
-            ctx.fillRect(rx, ry + 2, 2, 6);
-            ctx.fillRect(rx + 1, ry + 8, 3, 3); // leather pouch
-            ctx.fillStyle = PALETTE[10]; // stone
-            ctx.fillRect(rx + 2, ry + 9, 2, 2);
-          }
-        } else if (rightItem.id === 'throwing_trident') {
-          // Throwing Trident (Fuscina de Venator)
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[14]; // wood shaft
-            ctx.fillRect(rx - 2, ry + 1, 12, 1);
-            ctx.fillStyle = PALETTE[15]; // bronze socket
-            ctx.fillRect(rx + 10, ry - 1, 2, 5);
-            ctx.fillStyle = PALETTE[11]; // barbed prongs
-            ctx.fillRect(rx + 12, ry - 2, 5, 1);
-            ctx.fillRect(rx + 12, ry + 1, 6, 1);
-            ctx.fillRect(rx + 12, ry + 4, 5, 1);
-            ctx.fillStyle = PALETTE[0]; // barbed tips
-            ctx.fillRect(rx + 17, ry - 2, 2, 1);
-            ctx.fillRect(rx + 18, ry + 1, 2, 1);
-            ctx.fillRect(rx + 17, ry + 4, 2, 1);
-          } else {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(rx, ry - 12, 1, 20);
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(rx - 3, ry - 13, 7, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(rx - 3, ry - 18, 1, 5);
-            ctx.fillRect(rx, ry - 20, 1, 7);
-            ctx.fillRect(rx + 3, ry - 18, 1, 5);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx - 3, ry - 19, 1, 1);
-            ctx.fillRect(rx, ry - 21, 1, 1);
-            ctx.fillRect(rx + 3, ry - 19, 1, 1);
-          }
-        } else if (rightItem.id === 'gladius') {
-          // Gladius (+6 ATK)
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(rx, ry, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(rx + 2, ry, 9, 2);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx + 11, ry, 2, 2);
-          } else {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(rx, ry, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(rx + 1, ry + 2, 2, 8);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx + 1, ry + 10, 2, 1);
-          }
-        } else if (rightItem.id === 'sica') {
-          // Sica (+14 ATK, +5% Crit)
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(rx, ry, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(rx + 2, ry, 8, 2);
-            ctx.fillRect(rx + 9, ry + 1, 3, 3); // downward curved hook
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx + 10, ry + 3, 2, 2);
-          } else {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(rx, ry, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(rx + 1, ry + 2, 2, 7);
-            ctx.fillRect(rx + 2, ry + 8, 3, 2); // hooked tip
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx + 4, ry + 8, 2, 1);
-          }
-        } else if (rightItem.id === 'fuscina') {
-          // Fuscina / Trident (+24 ATK, +10% Crit)
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(rx - 2, ry + 1, 12, 1);
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(rx + 10, ry - 1, 2, 5); // crossbar
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(rx + 12, ry - 2, 4, 1);
-            ctx.fillRect(rx + 12, ry + 1, 5, 1);
-            ctx.fillRect(rx + 12, ry + 4, 4, 1);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx + 16, ry - 2, 2, 1);
-            ctx.fillRect(rx + 17, ry + 1, 2, 1);
-            ctx.fillRect(rx + 16, ry + 4, 2, 1);
-          } else {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(rx, ry - 12, 1, 20);
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(rx - 3, ry - 13, 7, 2); // crossbar
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(rx - 3, ry - 18, 1, 5);
-            ctx.fillRect(rx, ry - 20, 1, 7);
-            ctx.fillRect(rx + 3, ry - 18, 1, 5);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx - 3, ry - 19, 1, 1);
-            ctx.fillRect(rx, ry - 21, 1, 1);
-            ctx.fillRect(rx + 3, ry - 19, 1, 1);
-          }
-        } else if (rightItem.id === 'damascene_spatha') {
-          // Damascene Spatha (+32 ATK, +12% Crit)
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(rx - 1, ry + 1, 3, 2);
-            ctx.fillRect(rx + 2, ry - 1, 2, 6);
-            ctx.fillStyle = PALETTE[6];
-            ctx.fillRect(rx + 4, ry, 13, 2);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx + 5, ry - 1, 10, 1);
-            ctx.fillRect(rx + 16, ry, 2, 2);
-          } else {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(rx, ry + 1, 2, 4);
-            ctx.fillRect(rx - 2, ry, 6, 2);
-            ctx.fillStyle = PALETTE[6];
-            ctx.fillRect(rx, ry - 14, 2, 14);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx - 1, ry - 13, 1, 12);
-          }
-        } else if (rightItem.id === 'obsidian_kopis') {
-          // Obsidian Kopis (+36 ATK, +15% Crit)
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(rx, ry, 2, 2);
-            ctx.fillStyle = PALETTE[5];
-            ctx.fillRect(rx + 2, ry - 1, 10, 3);
-            ctx.fillRect(rx + 10, ry + 1, 3, 3);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx + 12, ry + 2, 2, 2);
-          } else {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(rx, ry, 2, 2);
-            ctx.fillStyle = PALETTE[5];
-            ctx.fillRect(rx + 1, ry + 2, 2, 8);
-            ctx.fillRect(rx + 2, ry + 8, 3, 3);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(rx + 4, ry + 9, 2, 1);
-          }
-        } else if (rightItem.id === 'spiked_caestus') {
-          // Spiked Caestus (+28 ATK, +4 DEF, +6 SPD)
-          ctx.fillStyle = PALETTE[14];
-          ctx.fillRect(rx, ry - 1, 4, 4);
-          ctx.fillStyle = PALETTE[11];
-          ctx.fillRect(rx + 4, ry - 1, 2, 1);
-          ctx.fillRect(rx + 4, ry + 2, 2, 1);
-          ctx.fillStyle = PALETTE[0];
-          ctx.fillRect(rx + 5, ry, 2, 2);
-        }
-      } else {
-        // Culture Default Right-Hand Item
-        if (culture === 'roman') {
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(lungeX + 3, torsoY + 2, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 5, torsoY + 2, 10, 1);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(lungeX + 15, torsoY + 2, 2, 1);
-          } else {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(lungeX + 3, torsoY + 2, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 4, torsoY + 4, 1, 8);
-          }
-        } else if (culture === 'celt') {
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(lungeX + 2, torsoY + 1, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 4, torsoY + 1, 13, 2);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(lungeX + 17, torsoY + 1, 2, 1);
-          } else {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(lungeX + 3, torsoY, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 3, torsoY + 2, 2, 11);
-          }
-        } else if (culture === 'berber') {
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(lungeX + 3, torsoY + 1, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 5, torsoY + 1, 8, 2);
-            ctx.fillRect(lungeX + 13, torsoY - 1, 3, 2);
-          } else {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(lungeX + 3, torsoY + 2, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 4, torsoY + 4, 2, 7);
-            ctx.fillRect(lungeX + 3, torsoY + 10, 2, 2);
-          }
-        } else if (culture === 'scythian') {
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(lungeX - 2, torsoY + 2, 18, 1);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 16, torsoY + 1, 4, 2);
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(lungeX + 20, torsoY + 2, 2, 1);
-            ctx.fillStyle = PALETTE[3];
-            ctx.fillRect(lungeX + 14, torsoY + 3, 4, 2);
-          } else {
-            ctx.fillStyle = PALETTE[14];
-            ctx.fillRect(lungeX + 3, torsoY - 12, 1, 22);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 2, torsoY - 16, 3, 4);
-            ctx.fillStyle = PALETTE[3];
-            ctx.fillRect(lungeX + 4, torsoY - 12, 3, 3);
-          }
-        } else {
-          // hunnic
-          if (isStriking) {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(lungeX + 2, torsoY + 1, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 4, torsoY + 1, 10, 1);
-            ctx.fillRect(lungeX + 12, torsoY, 3, 2);
-          } else {
-            ctx.fillStyle = PALETTE[15];
-            ctx.fillRect(lungeX + 3, torsoY + 1, 2, 2);
-            ctx.fillStyle = PALETTE[11];
-            ctx.fillRect(lungeX + 4, torsoY + 3, 2, 8);
-            ctx.fillRect(lungeX + 5, torsoY + 9, 2, 2);
-          }
-        }
-      }
-    }
-
-    // Grapple sparks and dust around grapple point
-    if (state === 'pinning') {
-      const sparkPhase = Math.floor(safeAnim * 20) % 3;
-      const sparkCol = sparkPhase === 0 ? PALETTE[0] : sparkPhase === 1 ? PALETTE[15] : PALETTE[2];
-      ctx.fillStyle = sparkCol;
-      ctx.fillRect(rx + 9, ry, 2, 2);
-      ctx.fillRect(rx + 12, ry + 3, 2, 1);
-      if (sparkPhase === 0) {
-        ctx.fillRect(rx + 7, ry + 2, 1, 2);
-        ctx.fillRect(rx + 13, ry - 1, 2, 1);
-      } else if (sparkPhase === 1) {
-        ctx.fillRect(rx + 10, ry - 2, 2, 1);
-        ctx.fillRect(rx + 8, ry + 4, 1, 2);
-      }
-      // Dust puffs at feet
-      const dustPulse = Math.floor(safeAnim * 15) % 2 === 0;
-      ctx.fillStyle = dustPulse ? PALETTE[1] : PALETTE[14];
-      ctx.fillRect(lungeX + 5, 0, 3, 1);
-      ctx.fillRect(lungeX + 8, -1, 2, 1);
-    }
-  }
-
-  ctx.restore();
-}
-
-// ============================================================================
-// CAMP VIEW RENDERERS (Pale Alabaster Floor, Grey Framing Walls, Moving Clouds)
-// ============================================================================
-
-function drawCampSkyAndWalls(
-  ctx: CanvasRenderingContext2D,
-  animTime: number,
-  podiumTierWon = 0,
-  shootingStarProgress = 0,
-  campTimeOfDay = 35,
-) {
-  // Sky Horizon
-  ctx.fillStyle = PALETTE[9];
-  ctx.fillRect(0, 0, LOGIC_WIDTH, 14);
-  drawDitherRect(ctx, 0, 14, LOGIC_WIDTH, 8, PALETTE[9], PALETTE[6], 0.5);
-  ctx.fillStyle = PALETTE[6];
-  ctx.fillRect(0, 22, LOGIC_WIDTH, 14);
-
-  // CELESTIAL ORBITAL CYCLE: SUN AND MOON
-  const cTime = ((campTimeOfDay % 120) + 120) % 120;
-
-  // 1. Radiant Sun Arc (Dawn -> Day -> Dusk: cTime 0 to 82)
-  if (cTime >= 0 && cTime <= 82) {
-    const sunT = cTime / 80;
-    const sunX = Math.round(-15 + (LOGIC_WIDTH + 30) * Math.min(1, Math.max(0, sunT)));
-    const sunY = Math.round(36 - Math.sin(Math.min(1, Math.max(0, sunT)) * Math.PI) * 26);
-
-    // Soft ambient radial glow expanding and contracting gently (harmonic breath)
-    const breath = 1 + 0.12 * Math.sin(animTime * 1.8);
-    const sunGlowRadius = Math.max(1, 24 * breath);
-
-    ctx.save();
-    const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, sunGlowRadius);
-    sunGrad.addColorStop(0, 'rgba(247, 222, 170, 0.65)'); // #F7DEAA core
-    sunGrad.addColorStop(0.35, 'rgba(217, 156, 82, 0.32)'); // #d99c52 warm mid
-    sunGrad.addColorStop(0.7, 'rgba(186, 118, 84, 0.12)'); // #ba7654 ambient
-    sunGrad.addColorStop(1, 'rgba(186, 118, 84, 0)');
-    ctx.fillStyle = sunGrad;
-    ctx.beginPath();
-    ctx.arc(sunX, sunY, sunGlowRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Radiant Sun Disc (#F7DEAA with #d99c52 rim)
-    ctx.fillStyle = '#d99c52';
-    ctx.beginPath();
-    ctx.arc(sunX, sunY, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#F7DEAA';
-    ctx.beginPath();
-    ctx.arc(sunX, sunY, 4, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Cardinal rays
-    ctx.fillStyle = '#F7DEAA';
-    ctx.fillRect(sunX - 7, sunY, 2, 1);
-    ctx.fillRect(sunX + 6, sunY, 2, 1);
-    ctx.fillRect(sunX, sunY - 7, 1, 2);
-    ctx.fillRect(sunX, sunY + 6, 1, 2);
-    ctx.restore();
-  }
-
-  // 2. Pale Moon Arc (Dusk -> Night -> Dawn: cTime 76 to 120 and 0 to 16)
-  if (cTime >= 76 || cTime <= 16) {
-    const moonT = cTime >= 76 ? (cTime - 76) / 44 : (cTime + 44) / 60;
-    const moonX = Math.round(-15 + (LOGIC_WIDTH + 30) * Math.min(1, Math.max(0, moonT)));
-    const moonY = Math.round(36 - Math.sin(Math.min(1, Math.max(0, moonT)) * Math.PI) * 24);
-
-    // Soft cool nocturnal ambient bloom (expanding and contracting gently)
-    const breath = 1 + 0.1 * Math.sin(animTime * 1.5 + 1);
-    const moonGlowRadius = Math.max(1, 20 * breath);
-
-    ctx.save();
-    const moonGrad = ctx.createRadialGradient(moonX, moonY, 0, moonX, moonY, moonGlowRadius);
-    moonGrad.addColorStop(0, 'rgba(222, 208, 149, 0.45)'); // #ded095 pale silver core
-    moonGrad.addColorStop(0.4, 'rgba(245, 214, 155, 0.18)'); // #f5d69b warm cream
-    moonGrad.addColorStop(0.75, 'rgba(71, 80, 92, 0.08)');  // slate blue
-    moonGrad.addColorStop(1, 'rgba(71, 80, 92, 0)');
-    ctx.fillStyle = moonGrad;
-    ctx.beginPath();
-    ctx.arc(moonX, moonY, moonGlowRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Pale Silver-Crescent Disc (#ded095 / #f5d69b)
-    ctx.fillStyle = '#ded095';
-    ctx.beginPath();
-    ctx.arc(moonX, moonY, 4, 0, Math.PI * 2);
-    ctx.fill();
-    // Inner crescent shadow cutout
-    ctx.fillStyle = PALETTE[6];
-    ctx.beginPath();
-    ctx.arc(moonX + 1.5, moonY - 0.5, 3.2, 0, Math.PI * 2);
-    ctx.fill();
-    // Silver rim highlight
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(moonX - 4, moonY - 1, 1, 2);
-    ctx.fillRect(moonX - 3, moonY - 3, 1, 1);
-    ctx.fillRect(moonX - 3, moonY + 2, 1, 1);
-    ctx.restore();
-  }
-
-  // Slow drift pixel clouds
-  const cloud1X = (Math.floor(animTime * 2.2) + 20) % (LOGIC_WIDTH + 60) - 40;
-  ctx.fillStyle = PALETTE[11];
-  ctx.fillRect(cloud1X, 8, 38, 6);
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(cloud1X + 4, 7, 26, 2);
-
-  const cloud2X = (Math.floor(animTime * 1.6) + 180) % (LOGIC_WIDTH + 60) - 40;
-  ctx.fillStyle = PALETTE[11];
-  ctx.fillRect(cloud2X, 16, 44, 7);
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(cloud2X + 6, 15, 30, 2);
-
-  // Solitary rare shooting star only when active in camp skybox
-  if (shootingStarProgress > 0 && shootingStarProgress < 1) {
-    drawShootingStarEffect(ctx, shootingStarProgress, 270, 2, 75, 40);
-  }
-
-  // Distant olive groves along the horizon
-  ctx.fillStyle = PALETTE[12];
-  for (let i = 0; i < LOGIC_WIDTH; i += 14) {
-    const treeH = 5 + (Math.sin(i * 0.45) > 0 ? 3 : 0);
-    ctx.fillRect(i, 44 - treeH, 11, treeH);
-  }
-
-  // Ashlar rear wall with coping
-  ctx.fillStyle = PALETTE[10];
-  ctx.fillRect(0, 44, LOGIC_WIDTH, 34);
-  ctx.fillStyle = PALETTE[11];
-  ctx.fillRect(0, 44, LOGIC_WIDTH, 2);
-
-  // Arched recessed niches with dark depth
-  for (let ax = 45; ax < LOGIC_WIDTH - 45; ax += 66) {
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(ax, 52, 14, 20);
-    ctx.fillStyle = PALETTE[9];
-    ctx.fillRect(ax + 2, 54, 10, 18);
-  }
-
-  // Podium candles by camp windows / alcoves (up to 5 lit for each won podium tier)
-  const CANDLE_ALCOVES = [
-    [52, 68],
-    [118, 68],
-    [184, 68],
-    [250, 68],
-    [284, 68],
-  ];
-  CANDLE_ALCOVES.forEach(([cx, cy], cIdx) => {
-    if (cIdx < podiumTierWon) {
-      // Soft painterly warm ambient radial bloom replacing hard dithered rings
-      drawSoftAmbientBloom(ctx, cx, cy - 4, 10, animTime, 0.75, cIdx * 1.3);
-      // Bronze saucer dish
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(cx - 3, cy + 2, 6, 2);
-      // Ivory wax pillar
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(cx - 1, cy - 3, 3, 5);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(cx - 2, cy, 1, 2);
-      // Flickering flame pixel
-      const flicker = (Math.floor(animTime * 14) + cIdx * 2) % 3;
-      const fX = flicker === 0 ? 0 : flicker === 1 ? -1 : 1;
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(cx, cy - 5, 1, 2);
-      ctx.fillStyle = '#F7DEAA';
-      ctx.fillRect(cx + fX, cy - 6, 1, 2);
-      ctx.fillStyle = '#ba7654';
-      ctx.fillRect(cx, cy - 7, 1, 1);
-    }
-  });
-
-  // Pale alabaster courtyard floor
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(0, 78, LOGIC_WIDTH, LOGIC_HEIGHT - 78);
-
-  // Courtyard flagstone grid markings
-  ctx.fillStyle = PALETTE[1];
-  for (let fy = 88; fy < LOGIC_HEIGHT; fy += 14) {
-    ctx.fillRect(0, fy, LOGIC_WIDTH, 1);
-  }
-  for (let fx = 18; fx < LOGIC_WIDTH - 18; fx += 28) {
-    for (let fy = 88; fy < LOGIC_HEIGHT; fy += 14) {
-      const stagger = (fy / 14) % 2 === 0 ? 0 : 14;
-      ctx.fillRect(fx + stagger, fy, 1, 14);
-    }
-  }
-
-  // Procedural 16-bit grass tufts scattered across camp courtyard ground
-  const CAMP_GRASS_TUFTS = [
-    [42, 94], [68, 118], [98, 102], [116, 142], [148, 96],
-    [174, 126], [196, 106], [218, 146], [252, 118], [274, 94],
-    [288, 128], [84, 162], [134, 156], [182, 166], [228, 160]
-  ];
-  CAMP_GRASS_TUFTS.forEach(([gx, gy]) => {
-    ctx.fillStyle = PALETTE[8]; // olive sage green
-    ctx.fillRect(gx, gy, 2, 2);
-    ctx.fillRect(gx + 1, gy - 1, 1, 2);
-    ctx.fillStyle = PALETTE[12]; // mossy olive drab
-    ctx.fillRect(gx - 1, gy + 1, 3, 1);
-  });
-
-  // Perimeter stone framing walls
-  ctx.fillStyle = PALETTE[10];
-  ctx.fillRect(0, 0, 18, LOGIC_HEIGHT);
-  ctx.fillRect(LOGIC_WIDTH - 18, 0, 18, LOGIC_HEIGHT);
-  ctx.fillStyle = PALETTE[6];
-  ctx.fillRect(0, 0, 4, LOGIC_HEIGHT);
-  ctx.fillRect(LOGIC_WIDTH - 4, 0, 4, LOGIC_HEIGHT);
-  ctx.fillStyle = PALETTE[5];
-  ctx.fillRect(17, 0, 1, LOGIC_HEIGHT);
-  ctx.fillRect(LOGIC_WIDTH - 18, 0, 1, LOGIC_HEIGHT);
-}
-
-function drawLineageStewardess(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  level: number,
-  animTimer: number,
-  isHovered: boolean,
-) {
-  ctx.save();
-  ctx.translate(Math.round(x), Math.round(y));
-
-  // Foot shadow
-  drawDitherShadow(ctx, 0, 1, 7, 2, PALETTE[5]);
-
-  if (isHovered) {
-    drawDitherShadow(ctx, 0, 1, 9, 3, PALETTE[15]);
-  }
-
-  const breath = Math.round(Math.sin(animTimer * 2.8) * 0.5);
-  const py = -breath;
-
-  // Level 2 Breeding Pens addition: Decorative stone water basin beside stewardess
-  if (level >= 2) {
-    // Stone water basin (x: -14, y: -6)
-    ctx.fillStyle = '#817475'; // limestone basin base
-    ctx.fillRect(-16, -5, 8, 6);
-    ctx.fillStyle = '#ded095'; // rim highlight
-    ctx.fillRect(-17, -7, 10, 2);
-    // Fresh sparkling water inside (#55796f, #ded095)
-    ctx.fillStyle = '#55796f';
-    ctx.fillRect(-15, -6, 6, 2);
-    const waterSparkle = Math.floor(animTimer * 5) % 2 === 0;
-    if (waterSparkle) {
-      ctx.fillStyle = '#ded095';
-      ctx.fillRect(-14, -6, 2, 1);
-    }
-
-    // Small scroll table beside stewardess (x: 10, y: -6)
-    ctx.fillStyle = '#7f644b'; // wooden table
-    ctx.fillRect(10, -6, 9, 7);
-    ctx.fillStyle = '#ded095'; // stacked papyrus lineage scrolls on table
-    ctx.fillRect(11, -8, 7, 2);
-    ctx.fillStyle = '#ba7654'; // wax seal ribbon on scroll
-    ctx.fillRect(14, -8, 2, 2);
-    ctx.fillStyle = '#3f363b'; // inkpot
-    ctx.fillRect(16, -9, 2, 2);
-    ctx.fillStyle = '#ded095'; // quill sticking out
-    ctx.fillRect(17, -11, 1, 2);
-  }
-
-  // Sandals
-  ctx.fillStyle = PALETTE[14];
-  ctx.fillRect(-2, py - 3, 2, 3);
-  ctx.fillRect(1, py - 3, 2, 3);
-
-  // Female Matriarch / Lineage Steward NPC:
-  // Draped stola tunic in soft cream / parchment (#e0d2b4 / #ded095) with burgundy sash (#6d3947)
-  ctx.fillStyle = '#e0d2b4'; // soft cream stola body
-  ctx.fillRect(-4, py - 18, 8, 15);
-  ctx.fillStyle = '#ded095'; // drapery folds
-  ctx.fillRect(-4, py - 16, 3, 13);
-  ctx.fillStyle = '#6d3947'; // classical palla sash drape over shoulder
-  ctx.fillRect(-3, py - 17, 2, 12);
-  ctx.fillRect(-1, py - 13, 4, 3);
-  ctx.fillStyle = '#ded095'; // gold embroidered hem
-  ctx.fillRect(-4, py - 4, 8, 1);
-
-  // Arms: Holding unrolled lineage papyrus scroll
-  ctx.fillStyle = PALETTE[1]; // arms
-  ctx.fillRect(-5, py - 12, 2, 5);
-  ctx.fillRect(3, py - 12, 2, 5);
-
-  // Unrolled lineage papyrus scroll between hands
-  ctx.fillStyle = '#ded095'; // scroll papyrus
-  ctx.fillRect(-3, py - 11, 7, 4);
-  ctx.fillStyle = '#7f644b'; // wooden scroll rods
-  ctx.fillRect(-4, py - 12, 1, 6);
-  ctx.fillRect(4, py - 12, 1, 6);
-  // Written text ink markings on scroll
-  ctx.fillStyle = '#3f363b';
-  ctx.fillRect(-2, py - 10, 4, 1);
-  ctx.fillRect(-2, py - 8, 3, 1);
-
-  // Head: Classical Roman female braided hair & golden pins
-  ctx.fillStyle = PALETTE[1]; // face
-  ctx.fillRect(-3, py - 22, 6, 5);
-  ctx.fillStyle = '#7f644b'; // chestnut brown braided hair
-  ctx.fillRect(-4, py - 25, 8, 4);
-  ctx.fillRect(-4, py - 22, 2, 4); // side braids
-  ctx.fillRect(2, py - 22, 2, 3);
-  // Golden hairpins / laurel ribbon in braided bun
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(-2, py - 25, 4, 1);
-  ctx.fillRect(-1, py - 26, 2, 2);
-
-  // Serene face & eyes
-  ctx.fillStyle = '#3f363b';
-  ctx.fillRect(0, py - 20, 1, 1);
-  ctx.fillStyle = '#9e4a42'; // lips
-  ctx.fillRect(-1, py - 18, 2, 1);
-
-  ctx.restore();
-}
-
-// Procedural Alexandrian Physician NPC Sprite
-export function drawPhysicianNpc(
-  ctx: CanvasRenderingContext2D,
-  physician: PhysicianNpcState,
-  animTimer: number,
-) {
-  if (!physician.active) return;
-  const px = Math.round(physician.x);
-  const py = Math.round(physician.y);
-
-  ctx.save();
-  ctx.translate(px, py);
-  if (physician.flipX) ctx.scale(-1, 1);
-
-  // Ground shadow
-  drawDitherShadow(ctx, 0, 1, 7, 2, PALETTE[5]);
-
-  const isWalking = physician.state === 'entering' || physician.state === 'roaming' || physician.state === 'departing';
-  const walkStride = isWalking ? Math.round(Math.sin(animTimer * 12) * 2) : 0;
-  const walkBob = isWalking ? Math.round(Math.abs(Math.sin(animTimer * 12)) * 1) : 0;
-  const yOff = -walkBob;
-
-  // Leather sandals & feet
-  ctx.fillStyle = '#7f644b';
-  ctx.fillRect(-2 - walkStride, yOff - 3, 2, 3);
-  ctx.fillRect(1 + walkStride, yOff - 3, 2, 3);
-
-  // Scholarly White Robe (#ffffff) with Emerald Green Trim (#2f5c3a)
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(-4, yOff - 17, 8, 14);
-  // Emerald trim along hem and down chest
-  ctx.fillStyle = '#2f5c3a';
-  ctx.fillRect(-4, yOff - 4, 8, 2);
-  ctx.fillRect(-1, yOff - 17, 2, 13);
-  ctx.fillStyle = '#437e50';
-  ctx.fillRect(-4, yOff - 10, 8, 1);
-
-  // Medical leather satchel slung across shoulder
-  ctx.fillStyle = '#7f644b';
-  ctx.fillRect(-4, yOff - 16, 2, 8);
-  ctx.fillRect(-2, yOff - 12, 2, 4);
-  ctx.fillStyle = '#3f363b';
-  ctx.fillRect(-6, yOff - 9, 3, 5);
-  // Healing cross emblem on satchel
-  ctx.fillStyle = '#2f5c3a';
-  ctx.fillRect(-5, yOff - 7, 1, 3);
-  ctx.fillRect(-6, yOff - 6, 3, 1);
-
-  // Left hand: Carrying smoking herbal censer on a bronze chain
-  ctx.fillStyle = PALETTE[1];
-  ctx.fillRect(-4, yOff - 11, 2, 3);
-  // Bronze chain
-  ctx.fillStyle = '#9c8053';
-  ctx.fillRect(-6, yOff - 10, 1, 4);
-  // Censer body
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(-8, yOff - 6, 5, 4);
-  ctx.fillStyle = '#ba7654';
-  ctx.fillRect(-7, yOff - 7, 3, 2);
-  // Herbal smoke drifting upward from censer
-  const smokeFrame = Math.floor(animTimer * 6) % 3;
-  ctx.fillStyle = 'rgba(136, 153, 122, 0.7)';
-  ctx.fillRect(-7 + (smokeFrame === 0 ? 0 : smokeFrame === 1 ? -1 : 1), yOff - 9, 2, 2);
-  ctx.fillRect(-8 + (smokeFrame === 1 ? 1 : 0), yOff - 12, 3, 2);
-
-  // Right hand: Carrying linen bandage roll & herbal vial
-  ctx.fillStyle = PALETTE[1];
-  ctx.fillRect(3, yOff - 11, 2, 3);
-  // Clean white linen bandage roll
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(4, yOff - 10, 3, 3);
-  // Emerald tincture bottle
-  ctx.fillStyle = '#2f5c3a';
-  ctx.fillRect(4, yOff - 7, 2, 3);
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(4, yOff - 8, 2, 1);
-
-  // Head, Alexandrian philosopher haircut & scholarly emerald browband
-  ctx.fillStyle = PALETTE[1]; // skin
-  ctx.fillRect(-3, yOff - 22, 6, 5);
-  ctx.fillStyle = '#574b50'; // grizzled dark curls
-  ctx.fillRect(-4, yOff - 24, 8, 3);
-  ctx.fillRect(-4, yOff - 22, 2, 3);
-  // Emerald green browband
-  ctx.fillStyle = '#2f5c3a';
-  ctx.fillRect(-3, yOff - 23, 6, 1);
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(0, yOff - 23, 1, 1);
-  // Trimmed beard & eyes
-  ctx.fillStyle = '#574b50';
-  ctx.fillRect(-3, yOff - 18, 6, 2);
-  ctx.fillStyle = '#3f363b';
-  ctx.fillRect(1, yOff - 20, 1, 1);
-
-  ctx.restore();
-}
-
-function drawVisitorNpc(
-  ctx: CanvasRenderingContext2D,
-  npc: VisitorWalkingNpcState,
-  animTimer: number,
-) {
-  if (!npc.active) return;
-  const x = Math.round(npc.x);
-  const y = Math.round(npc.y);
-  const type = npc.visitor.type;
-
-  ctx.save();
-  ctx.translate(x, y);
-  if (npc.flipX) ctx.scale(-1, 1);
-
-  // Fade out if entering tent doorway
-  if (npc.state === 'entering_tent') {
-    ctx.globalAlpha = Math.max(0.1, (npc.y - 74) / 10);
-  }
-
-  // Ground shadow
-  drawDitherShadow(ctx, 0, 1, 6, 2, PALETTE[5]);
-
-  const isWalking = npc.state === 'walking';
-  const walkStride = isWalking ? Math.round(Math.sin(animTimer * 12) * 2) : 0;
-  const walkBob = isWalking ? Math.round(Math.abs(Math.sin(animTimer * 12)) * 1) : 0;
-  const py = -walkBob;
-
-  if (type === 'merchant') {
-    // 1. APOTHECARY MERCHANT: Robed peddler carrying an herb satchel and small balance scale / flasks (#8C7A6B, #ba7654)
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(-2 - walkStride, py - 3, 2, 3);
-    ctx.fillRect(1 + walkStride, py - 3, 2, 3);
-
-    // Terracotta Robe (#ba7654) with Weathered Stone (#8C7A6B) trim
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(-4, py - 17, 8, 14);
-    ctx.fillStyle = '#8C7A6B';
-    ctx.fillRect(-4, py - 4, 8, 2);
-    ctx.fillRect(-1, py - 17, 2, 13);
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(-4, py - 10, 8, 2);
-
-    // Herb satchel slung across chest
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(-4, py - 16, 2, 8);
-    ctx.fillRect(-2, py - 12, 2, 4);
-    ctx.fillStyle = '#574b50';
-    ctx.fillRect(-6, py - 9, 3, 5);
-    // Green medicinal herb sprig poking out of satchel
-    ctx.fillStyle = '#627d4d';
-    ctx.fillRect(-7, py - 12, 2, 4);
-    ctx.fillStyle = '#88997a';
-    ctx.fillRect(-8, py - 13, 2, 2);
-    ctx.fillRect(-6, py - 11, 2, 2);
-
-    // Left hand holding balance scale / brass scale (#ded095)
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-4, py - 11, 2, 3);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(-8, py - 13, 6, 1);
-    ctx.fillRect(-5, py - 14, 1, 3);
-    ctx.fillStyle = '#a4968d';
-    ctx.fillRect(-8, py - 12, 1, 2);
-    ctx.fillRect(-3, py - 12, 1, 2);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(-9, py - 10, 3, 1);
-    ctx.fillRect(-4, py - 10, 3, 1);
-
-    // Right hand carrying glass apothecary flask with emerald elixir (#55796f)
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(3, py - 11, 2, 3);
-    ctx.fillStyle = '#55796f';
-    ctx.fillRect(4, py - 10, 3, 4);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(5, py - 11, 1, 1);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(4, py - 9, 1, 1);
-
-    // Head, face & peddler hood (#8C7A6B)
-    ctx.fillStyle = '#8C7A6B';
-    ctx.fillRect(-4, py - 23, 8, 6);
-    ctx.fillRect(-4, py - 20, 2, 5);
-    ctx.fillRect(2, py - 20, 2, 5);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-2, py - 20, 5, 4);
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(1, py - 19, 1, 1);
-    ctx.fillRect(-2, py - 17, 4, 1);
-
-  } else if (type === 'scout') {
-    // 2. SCOUT / SLAVE TRADER: Rugged hooded tracker with leather vest and iron key ring (#4f4448, #3f363b)
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(-3 - walkStride, py - 4, 3, 4);
-    ctx.fillRect(1 + walkStride, py - 4, 3, 4);
-
-    // Tunic (#3f363b) + Leather Vest (#7f644b / #4f4448)
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(-4, py - 17, 8, 13);
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(-4, py - 16, 8, 8);
-    ctx.fillStyle = '#4f4448';
-    ctx.fillRect(-5, py - 16, 2, 4);
-    ctx.fillRect(3, py - 16, 2, 4);
-    ctx.fillStyle = '#a4968d';
-    ctx.fillRect(-1, py - 14, 2, 1);
-    ctx.fillRect(-1, py - 11, 2, 1);
-    ctx.fillStyle = '#574b50';
-    ctx.fillRect(-4, py - 8, 8, 2);
-
-    // Iron key ring with heavy iron keys at belt (#a4968d, #ffffff)
-    ctx.fillStyle = '#a4968d';
-    ctx.fillRect(4, py - 9, 3, 3);
-    ctx.fillStyle = '#2A1B19';
-    ctx.fillRect(5, py - 8, 1, 1);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(4, py - 6, 1, 4);
-    ctx.fillRect(6, py - 6, 1, 3);
-    ctx.fillStyle = '#a4968d';
-    ctx.fillRect(5, py - 4, 1, 1);
-
-    // Arms: rugged braced arms
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(-5, py - 13, 2, 5);
-    ctx.fillRect(3, py - 13, 2, 5);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-5, py - 8, 2, 2);
-    ctx.fillRect(3, py - 8, 2, 2);
-
-    // Deep hooded cowl (#4f4448) casting shadow over eyes
-    ctx.fillStyle = '#4f4448';
-    ctx.fillRect(-4, py - 23, 8, 7);
-    ctx.fillRect(-3, py - 24, 6, 2);
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(-3, py - 21, 6, 5);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-2, py - 19, 4, 3);
-    ctx.fillStyle = '#2A1B19';
-    ctx.fillRect(0, py - 19, 1, 1);
-    ctx.fillStyle = '#574b50';
-    ctx.fillRect(-2, py - 17, 4, 1);
-
-  } else if (type === 'patron') {
-    // 3. PATRICIAN PATRON: Wealthy Roman noble wearing an immaculate white-and-gold bordered toga with a golden torc (#F7DEAA, #ffffff)
-    ctx.fillStyle = '#9e4a42';
-    ctx.fillRect(-2 - walkStride, py - 3, 2, 3);
-    ctx.fillRect(1 + walkStride, py - 3, 2, 3);
-
-    // Immaculate white toga (#ffffff) with golden border (#F7DEAA, #ded095)
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(-4, py - 18, 8, 15);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(-4, py - 17, 3, 14);
-    ctx.fillRect(1, py - 12, 3, 8);
-
-    // Gold embroidered border / hem (#F7DEAA, #ded095)
-    ctx.fillStyle = '#F7DEAA';
-    ctx.fillRect(-4, py - 4, 8, 1);
-    ctx.fillRect(-4, py - 17, 2, 14);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(-2, py - 16, 5, 2);
-
-    // Golden torc necklace & shoulder fibula clasp (#ded095, #9c8053)
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(-2, py - 19, 5, 2);
-    ctx.fillRect(-3, py - 17, 2, 2);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, py - 19, 1, 1);
-
-    // Hands: left hand tucked in toga, right hand holding velvet coin purse with golden coins
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(3, py - 11, 2, 3);
-    ctx.fillStyle = '#6d3947';
-    ctx.fillRect(4, py - 10, 4, 4);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(5, py - 11, 2, 1);
-    ctx.fillRect(5, py - 9, 2, 2);
-
-    // Head, dignified Roman patrician hairstyle & laurel trim
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-3, py - 23, 6, 5);
-    ctx.fillStyle = '#574b50';
-    ctx.fillRect(-4, py - 25, 8, 3);
-    ctx.fillRect(-4, py - 23, 2, 2);
-    ctx.fillStyle = '#F7DEAA';
-    ctx.fillRect(-2, py - 25, 4, 1);
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(1, py - 21, 1, 1);
-
-  } else {
-    // 4. RIVAL LANISTA: Flaunting swagger in ornate brass-studded cuirass and crimson cloak (#ba7654, #1b1216)
-    ctx.fillStyle = '#1b1216';
-    ctx.fillRect(-3 - walkStride, py - 4, 3, 4);
-    ctx.fillRect(1 + walkStride, py - 4, 3, 4);
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(-3 - walkStride, py - 3, 3, 1);
-    ctx.fillRect(1 + walkStride, py - 3, 3, 1);
-
-    // Flowing Crimson Cloak billowing behind shoulders (#9e4a42, #6d3947)
-    const cloakSway = isWalking ? Math.round(Math.sin(animTimer * 10) * 2) : 0;
-    ctx.fillStyle = '#6d3947';
-    ctx.fillRect(-7 + cloakSway, py - 17, 3, 14);
-    ctx.fillStyle = '#9e4a42';
-    ctx.fillRect(-6 + cloakSway, py - 16, 3, 12);
-    ctx.fillRect(-7 + cloakSway, py - 4, 4, 2);
-
-    // Ornate Brass-Studded Muscle Cuirass (#ba7654, #9c8053 with gold studs #ded095)
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(-4, py - 17, 8, 9);
-    ctx.fillStyle = '#9c8053';
-    ctx.fillRect(-3, py - 16, 2, 3);
-    ctx.fillRect(1, py - 16, 2, 3);
-    // Brass studs / rivets glinting
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(-3, py - 14, 1, 1);
-    ctx.fillRect(2, py - 14, 1, 1);
-    ctx.fillRect(-1, py - 11, 2, 1);
-    ctx.fillRect(-3, py - 9, 1, 1);
-    ctx.fillRect(2, py - 9, 1, 1);
-
-    // Crimson & Leather Pteruges (kilt)
-    ctx.fillStyle = '#9e4a42';
-    ctx.fillRect(-4, py - 8, 8, 5);
-    ctx.fillStyle = '#1b1216';
-    ctx.fillRect(-3, py - 6, 2, 3);
-    ctx.fillRect(1, py - 6, 2, 3);
-
-    // Swagger arms: right hand resting arrogantly on sword pommel at hip
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(3, py - 17, 3, 3);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(3, py - 14, 2, 5);
-    // Sword hilt at hip (#ded095, #7f644b)
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(4, py - 9, 2, 2);
-    ctx.fillRect(3, py - 8, 4, 1);
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(4, py - 7, 2, 6);
-
-    // Left arm swinging with swagger
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(-6, py - 17, 3, 3);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-5, py - 14, 2, 5);
-
-    // Head, sneering face & trimmed arrogant beard
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-3, py - 23, 6, 5);
-    ctx.fillStyle = '#1b1216';
-    ctx.fillRect(-4, py - 25, 8, 3);
-    ctx.fillRect(-4, py - 23, 2, 2);
-    ctx.fillStyle = '#1b1216';
-    ctx.fillRect(-2, py - 18, 5, 2);
-    ctx.fillStyle = '#9e4a42';
-    ctx.fillRect(0, py - 19, 2, 1);
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(1, py - 21, 1, 1);
-  }
-
-  ctx.restore();
-}
-
-function drawCampCourtyardProps(
-  ctx: CanvasRenderingContext2D,
-  hoveredProp?: 'tent' | 'weaponRack' | 'dummy' | 'bell' | 'merchant' | 'stewardess' | 'visitor' | null,
-  animTimer = 0,
-  upgrades?: LudusUpgrades,
-) {
-  const tLvl = upgrades?.trainingGrounds || 0;
-  const mLvl = upgrades?.medicalBay || 0;
-  const bLvl = upgrades?.breedingPens || 0;
-
-  // Bronze Trial Bell at Camp Bottom Right
-  drawDitherShadow(ctx, 302, 178, 10, 3, PALETTE[5]);
-  ctx.fillStyle = PALETTE[14]; // raw umber wood gallows post
-  ctx.fillRect(298, 154, 4, 24);
-  ctx.fillRect(298, 154, 12, 3);
-  ctx.fillStyle = PALETTE[5]; // iron brace
-  ctx.fillRect(298, 154, 4, 2);
-  ctx.fillRect(302, 157, 2, 2);
-  ctx.fillStyle = PALETTE[11]; // chain
-  ctx.fillRect(307, 157, 1, 4);
-  ctx.fillStyle = PALETTE[15]; // bronze bell dome
-  ctx.fillRect(305, 161, 5, 4);
-  ctx.fillRect(304, 165, 7, 3);
-  ctx.fillStyle = PALETTE[0]; // bronze glint
-  ctx.fillRect(306, 162, 2, 2);
-  ctx.fillStyle = PALETTE[14]; // clapper
-  ctx.fillRect(307, 168, 1, 2);
-
-  // --------------------------------------------------------------------------
-  // MEDICAL BAY UPGRADES: PROGRESSIVE DECORATIONS AROUND TENT (Levels 1, 2, 3)
-  // --------------------------------------------------------------------------
-  if (mLvl >= 1) {
-    // Level 1: Medicinal vine leaves (#627d4d / #3e5a32) creeping subtly up camp wall & tent corner
-    ctx.fillStyle = '#3e5a32'; // dark vine stem
-    ctx.fillRect(34, 52, 1, 22);
-    ctx.fillRect(35, 60, 4, 1);
-    ctx.fillRect(38, 56, 1, 8);
-    ctx.fillRect(42, 66, 1, 14);
-    // Tendrils climbing left corner of tent
-    ctx.fillRect(44, 72, 3, 1);
-    ctx.fillRect(46, 70, 1, 8);
-    // Leaves in #627d4d
-    ctx.fillStyle = '#627d4d';
-    ctx.fillRect(33, 54, 2, 2);
-    ctx.fillRect(35, 58, 2, 2);
-    ctx.fillRect(38, 62, 2, 2);
-    ctx.fillRect(41, 68, 2, 2);
-    ctx.fillRect(45, 71, 2, 2);
-    ctx.fillRect(46, 75, 2, 2);
-    ctx.fillStyle = '#88997a'; // sage leaf highlights
-    ctx.fillRect(34, 55, 1, 1);
-    ctx.fillRect(39, 63, 1, 1);
-    ctx.fillRect(46, 72, 1, 1);
-  }
-
-  if (mLvl >= 2) {
-    // Level 2: Expanded lush healing vines with medicinal flower buds, herb drying rack, and stone mortar
-    // Additional lush climbing vines with red/white medicinal flower buds
-    ctx.fillStyle = '#3e5a32';
-    ctx.fillRect(26, 48, 1, 28);
-    ctx.fillRect(27, 54, 6, 1);
-    ctx.fillRect(31, 50, 1, 6);
-    ctx.fillStyle = '#627d4d';
-    ctx.fillRect(25, 50, 2, 2);
-    ctx.fillRect(27, 53, 2, 2);
-    ctx.fillRect(30, 49, 2, 2);
-    // Medicinal flower buds (#9e4a42 red buds & #ded095 white buds)
-    ctx.fillStyle = '#9e4a42'; // red flower bud
-    ctx.fillRect(26, 52, 1, 1);
-    ctx.fillRect(36, 58, 1, 1);
-    ctx.fillRect(43, 66, 1, 1);
-    ctx.fillStyle = '#ffffff'; // white flower bud
-    ctx.fillRect(29, 49, 1, 1);
-    ctx.fillRect(40, 61, 1, 1);
-
-    // Herb drying rack by tent wall (x: 30, y: 70-78)
-    drawDitherShadow(ctx, 32, 79, 6, 2, PALETTE[5]);
-    ctx.fillStyle = '#7f644b'; // timber posts
-    ctx.fillRect(28, 68, 2, 10);
-    ctx.fillRect(36, 68, 2, 10);
-    ctx.fillRect(27, 69, 11, 1); // horizontal hanging crossbar
-    // Suspended hung dried herb bunches (#88997a, #ded095, #6f705a)
-    ctx.fillStyle = '#88997a';
-    ctx.fillRect(29, 70, 2, 4);
-    ctx.fillRect(30, 74, 1, 2);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(32, 70, 2, 5);
-    ctx.fillRect(33, 75, 1, 1);
-    ctx.fillStyle = '#6f705a';
-    ctx.fillRect(35, 70, 2, 4);
-
-    // Stone mortar and pestle by tent wall (x: 43, y: 84)
-    drawDitherShadow(ctx, 44, 87, 4, 1, PALETTE[5]);
-    ctx.fillStyle = '#817475'; // limestone block
-    ctx.fillRect(42, 83, 5, 4);
-    ctx.fillStyle = '#ded095'; // pestle handle
-    ctx.fillRect(44, 80, 1, 4);
-    ctx.fillStyle = '#627d4d'; // ground green salve paste
-    ctx.fillRect(43, 83, 3, 1);
-  }
-
-  if (mLvl >= 3) {
-    // Level 3: Covered apothecary bench with clay salve amphorae, clean rolled linen bandages & dense ivy
-    // Shaded bench table at (x: 23, y: 81)
-    drawDitherShadow(ctx, 31, 88, 10, 2, PALETTE[5]);
-    ctx.fillStyle = '#7f644b'; // wooden bench table
-    ctx.fillRect(22, 80, 18, 7);
-    ctx.fillRect(23, 87, 2, 2);
-    ctx.fillRect(37, 87, 2, 2);
-    // Bench canopy awning (#ded095 canvas with #7f644b posts)
-    ctx.fillStyle = '#7f644b'; // slender posts
-    ctx.fillRect(21, 68, 1, 14);
-    ctx.fillRect(39, 68, 1, 14);
-    ctx.fillStyle = '#ded095'; // awning roof
-    ctx.fillRect(19, 67, 23, 3);
-    ctx.fillStyle = '#ba7654'; // scallop valance
-    ctx.fillRect(19, 70, 23, 1);
-    // Dense climbing ivy along canopy frame
-    ctx.fillStyle = '#3e5a32';
-    ctx.fillRect(20, 66, 21, 1);
-    ctx.fillStyle = '#627d4d';
-    ctx.fillRect(21, 65, 3, 2);
-    ctx.fillRect(28, 65, 4, 2);
-    ctx.fillRect(36, 65, 3, 2);
-
-    // Clay salve amphorae jars on table (#ba7654, #ded095)
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(24, 76, 3, 4);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(25, 75, 1, 1);
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(28, 77, 3, 3);
-    // Clean rolled linen bandages (#ffffff, #ded095)
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(32, 78, 3, 2);
-    ctx.fillRect(32, 77, 3, 1);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(35, 78, 3, 2);
-  }
-
-  // Camp Pavilion Tent
-  const cx = 64;
-  drawDitherShadow(ctx, cx, 99, 24, 4, PALETTE[5]);
-
-  for (let y = 58; y <= 80; y++) {
-    const progress = (y - 58) / 22;
-    const halfW = Math.round(progress * 20);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(cx - halfW, y, cx - 2 - (cx - halfW), 1);
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(cx - 2, y, 4, 1);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(cx + 2, y, halfW - 2, 1);
-  }
-
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(cx - 20, 81, 14, 17);
-  ctx.fillStyle = PALETTE[1];
-  ctx.fillRect(cx + 6, 81, 14, 17);
-  ctx.fillStyle = PALETTE[5];
-  ctx.fillRect(cx - 6, 81, 12, 17);
-
-  ctx.fillStyle = PALETTE[14];
-  ctx.fillRect(cx - 1, 52, 2, 6);
-  ctx.fillStyle = PALETTE[3];
-  ctx.fillRect(cx + 1, 50, 8, 4);
-
-  // --------------------------------------------------------------------------
-  // BREEDING PENS UPGRADES: COURTYARD ARBOR & LINEAGE STEWARDESS (Levels 1, 2)
-  // --------------------------------------------------------------------------
-  if (bLvl >= 1) {
-    // Level 1: Fenced courtyard arbor with woven straw bedding beside tent (x: 84-110, y: 76-88)
-    drawDitherShadow(ctx, 97, 88, 14, 3, PALETTE[5]);
-    // Woven golden straw bedding inside arbor (#ded095, #cb9f6b, #ba7654)
-    ctx.fillStyle = '#cb9f6b';
-    ctx.fillRect(86, 78, 22, 9);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(88, 79, 18, 7);
-    ctx.fillStyle = '#ba7654'; // woven straw cross-strands
-    for (let sx = 89; sx < 104; sx += 4) {
-      ctx.fillRect(sx, 81, 2, 1);
-      ctx.fillRect(sx + 1, 83, 2, 1);
-    }
-    // Timber fence arbor posts & split rails (#7f644b, #cb9f6b)
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(84, 75, 2, 12);
-    ctx.fillRect(108, 75, 2, 12);
-    ctx.fillRect(96, 74, 2, 13);
-    // Split fence rails
-    ctx.fillStyle = '#cb9f6b';
-    ctx.fillRect(84, 76, 26, 1);
-    ctx.fillRect(84, 81, 26, 1);
-
-    // Level 2 Breeding Pens addition: Decorative gilded laurel motifs accenting pen entryway
-    if (bLvl >= 2) {
-      ctx.fillStyle = '#ded095'; // gilded laurel crown on center arbor post
-      ctx.fillRect(94, 71, 6, 3);
-      ctx.fillRect(95, 70, 4, 1);
-      ctx.fillStyle = '#9c8053';
-      ctx.fillRect(96, 72, 2, 2);
-    }
-
-    // Spawn the female Lineage Stewardess NPC tending to records & lineage scrolls
-    const isStewardessHovered = hoveredProp === 'stewardess';
-    drawLineageStewardess(ctx, 96, 84, bLvl, animTimer, isStewardessHovered);
-  }
-
-  // --------------------------------------------------------------------------
-  // TRAINING GROUNDS UPGRADES: PROGRESSIVE DECORATIONS AROUND DUMMY (Levels 1, 2, 3)
-  // --------------------------------------------------------------------------
-  if (tLvl >= 2) {
-    // Level 2: Sand training ring bordered with rounded stones around Manikin
-    // Circular sand clearing around (cx: 236, cy: 91, rx: 25, ry: 9)
-    ctx.fillStyle = '#cb9f6b';
-    ctx.fillRect(212, 85, 48, 12);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(215, 87, 42, 8);
-    // Rounded stone border ring (#817475, #a4968d, #574b50)
-    const stones = [
-      [211, 90], [213, 85], [218, 83], [225, 82], [235, 82],
-      [245, 82], [253, 84], [258, 87], [260, 92], [257, 96],
-      [250, 97], [240, 98], [228, 98], [219, 97], [213, 94]
-    ];
-    stones.forEach(([sx, sy], idx) => {
-      ctx.fillStyle = idx % 2 === 0 ? '#817475' : '#a4968d';
-      ctx.fillRect(sx, sy, 3, 2);
-      ctx.fillStyle = '#574b50';
-      ctx.fillRect(sx + 1, sy + 1, 2, 1);
-    });
-
-    // Weapon rack filled with practice gladii and spears on right edge of sand pit (x: 262, y: 84)
-    drawDitherShadow(ctx, 266, 92, 7, 2, PALETTE[5]);
-    ctx.fillStyle = '#7f644b'; // rack uprights
-    ctx.fillRect(261, 80, 2, 10);
-    ctx.fillRect(270, 80, 2, 10);
-    ctx.fillRect(259, 83, 14, 1);
-    // Upright practice spears and gladii
-    ctx.fillStyle = '#ded095'; // wooden practice spears
-    ctx.fillRect(264, 72, 1, 18);
-    ctx.fillRect(268, 73, 1, 17);
-    ctx.fillStyle = '#a4968d'; // spear tips
-    ctx.fillRect(264, 70, 1, 2);
-    ctx.fillRect(268, 71, 1, 2);
-    // Slanted gladii
-    ctx.fillStyle = '#cb9f6b';
-    ctx.fillRect(262, 80, 1, 8);
-    ctx.fillRect(266, 81, 1, 7);
-  }
-
-  if (tLvl >= 3) {
-    // Level 3: Dual training dummies, hanging sand punching bags, crossed iron weapons mounted above
-    // Crossed iron weapons mounted on wall plaque above sand pit (x: 236, y: 64)
-    ctx.fillStyle = '#7f644b'; // wooden mounting plaque
-    ctx.fillRect(231, 60, 12, 9);
-    ctx.fillStyle = '#9c8053'; // bronze rim
-    ctx.strokeRect(231.5, 60.5, 11, 8);
-    // Crossed iron gladii blades (#ded095, #a4968d)
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(229, 61, 16, 1);
-    ctx.fillRect(229, 67, 16, 1);
-    ctx.fillRect(235, 58, 4, 13);
-    ctx.fillStyle = '#9e4a42'; // center crimson boss
-    ctx.fillRect(235, 63, 4, 3);
-
-    // Second Training Dummy at (x: 216, y: 86)
-    drawDitherShadow(ctx, 216, 95, 7, 2, PALETTE[5]);
-    ctx.fillStyle = PALETTE[14]; // post
-    ctx.fillRect(215, 73, 3, 22);
-    ctx.fillRect(210, 77, 13, 3); // arms
-    ctx.fillStyle = PALETTE[1];  // straw body
-    ctx.fillRect(212, 75, 9, 12);
-    // Battered bronze practice skullcap helmet mounted on dummy head
-    ctx.fillStyle = '#9c8053';
-    ctx.fillRect(213, 70, 7, 4);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(214, 69, 5, 1);
-
-    // Hanging heavy sand punching bag (x: 274, y: 76)
-    drawDitherShadow(ctx, 274, 94, 6, 2, PALETTE[5]);
-    ctx.fillStyle = '#7f644b'; // timber gallows arm
-    ctx.fillRect(271, 66, 8, 2);
-    ctx.fillRect(278, 66, 2, 26);
-    // Chain suspension
-    ctx.fillStyle = '#a4968d';
-    ctx.fillRect(273, 68, 1, 4);
-    ctx.fillRect(275, 68, 1, 4);
-    // Heavy cylinder leather sand punching bag (#cb9f6b, #7f644b)
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(271, 72, 6, 15);
-    ctx.fillStyle = '#cb9f6b';
-    ctx.fillRect(272, 73, 4, 13);
-    ctx.fillStyle = '#3f363b'; // iron reinforcing bands
-    ctx.fillRect(271, 76, 6, 1);
-    ctx.fillRect(271, 82, 6, 1);
-  }
-
-  // Wooden Training Dummy / Manikin (Primary)
-  drawDitherShadow(ctx, 237, 98, 8, 2, PALETTE[5]);
-  ctx.fillStyle = PALETTE[14];
-  ctx.fillRect(236, 74, 3, 24);
-  ctx.fillRect(230, 78, 15, 3);
-  ctx.fillStyle = PALETTE[1];
-  ctx.fillRect(233, 76, 9, 13);
-  ctx.fillStyle = PALETTE[3];
-  ctx.fillRect(244, 78, 4, 6);
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(245, 79, 2, 4);
-
-  // Level 1 Training Grounds: Extra practice swords and wooden shields leaning against Manikin post
-  if (tLvl >= 1) {
-    // Wooden gladius leaning against left post base
-    ctx.fillStyle = '#cb9f6b'; // blade
-    ctx.fillRect(231, 88, 2, 10);
-    ctx.fillStyle = '#7f644b'; // hilt
-    ctx.fillRect(230, 85, 4, 2);
-    ctx.fillRect(231, 83, 2, 2);
-    // Wooden sword leaning against right post base
-    ctx.fillStyle = '#cb9f6b';
-    ctx.fillRect(240, 89, 2, 9);
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(239, 86, 4, 2);
-    // Round wooden shield propped against post base
-    ctx.fillStyle = '#574b50'; // iron rim
-    ctx.fillRect(232, 92, 10, 6);
-    ctx.fillStyle = '#ba7654'; // wood planks
-    ctx.fillRect(233, 93, 8, 4);
-    ctx.fillStyle = '#ded095'; // center boss
-    ctx.fillRect(236, 94, 2, 2);
-  }
-
-  // Weapon Rack
-  drawDitherShadow(ctx, 175, 90, 12, 2, PALETTE[5]);
-  ctx.fillStyle = PALETTE[14];
-  ctx.fillRect(168, 80, 2, 8);
-  ctx.fillRect(182, 80, 2, 8);
-  ctx.fillRect(166, 82, 18, 2);
-  ctx.fillStyle = PALETTE[11];
-  ctx.fillRect(170, 77, 1, 9);
-  ctx.fillRect(174, 76, 1, 10);
-  ctx.fillRect(178, 77, 1, 9);
-}
-
-// ============================================================================
 // CLEAN ARENA DUEL BACKGROUND (Sandy Pit, Bleachers, Balcony)
 // ============================================================================
 
-export function playJudgmentAudio(type: 'build' | 'cheer' | 'slash' | 'roar') {
-  if (type === 'build') {
-    try {
-      const a = new Audio('crowd_ooo_build.mp3');
-      a.volume = 0.6;
-      a.play().catch(() => {});
-    } catch (_) {}
-    gameAudio.playCrowdMurmurBuild();
-  } else if (type === 'cheer' || type === 'roar') {
-    try {
-      const a = new Audio('crowd_cheer.mp3');
-      a.volume = 0.9;
-      a.play().catch(() => {});
-    } catch (_) {}
-    gameAudio.playCrowdWhoop();
-    gameAudio.playCrowdReaction(5, true);
-    gameAudio.playCrowdFatalBlow(5);
-  } else if (type === 'slash') {
-    try {
-      const a = new Audio('sword_slash.mp3');
-      a.volume = 0.8;
-      a.play().catch(() => {});
-    } catch (_) {}
-    gameAudio.playSwordClash();
-    gameAudio.playMeleePunch();
-  }
-}
-
-export function drawEmptyEmperorBalconySprite(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  railY: number,
-) {
-  // Two Praetorian Guards flanking the empty throne, watching down on sands in shock
-  [-20, 20].forEach((offset) => {
-    const gx = cx + offset;
-    const gy = railY;
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(gx - 2, gy - 12, 5, 8);
-    ctx.fillRect(gx - 2, gy - 18, 5, 6);
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(gx - 2, gy - 21, 5, 3);
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(gx + (offset < 0 ? -4 : 4), gy - 26, 1, 26);
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(gx + (offset < 0 ? -4 : 4), gy - 29, 1, 3);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(gx + (offset < 0 ? -4 : 4), gy - 30, 1, 1);
-  });
-
-  // Empty Gilded Imperial Throne Chair
-  const ty = railY;
-  ctx.fillStyle = PALETTE[15];
-  ctx.fillRect(cx - 7, ty - 22, 14, 18);
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(cx - 7, ty - 24, 3, 3);
-  ctx.fillRect(cx + 4, ty - 24, 3, 3);
-  ctx.fillRect(cx - 2, ty - 25, 4, 3);
-  ctx.fillStyle = PALETTE[3];
-  ctx.fillRect(cx - 5, ty - 20, 10, 14);
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(cx - 3, ty - 16, 6, 3);
-  ctx.fillRect(cx - 1, ty - 18, 2, 5);
-  ctx.fillStyle = PALETTE[4];
-  ctx.fillRect(cx - 6, ty - 6, 12, 4);
-  ctx.fillStyle = PALETTE[15];
-  ctx.fillRect(cx - 7, ty - 6, 14, 1);
-}
-
-export function drawEmperorBalconySprite(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  railY: number,
-  posture: 'standing' | 'thumbs_up' | 'thumbs_down',
-  animTimer = 0,
-) {
-  // Emperor at cx, rail at railY
-  // 1. Two Praetorian Guards flanking the Emperor
-  [-18, 18].forEach((offset) => {
-    const gx = cx + offset;
-    const gy = railY;
-    // Guard armor
-    ctx.fillStyle = PALETTE[15]; // bronze cuirass
-    ctx.fillRect(gx - 2, gy - 12, 5, 8);
-    // Bronze helmet & red plume
-    ctx.fillRect(gx - 2, gy - 18, 5, 6);
-    ctx.fillStyle = PALETTE[3]; // crimson crest
-    ctx.fillRect(gx - 2, gy - 21, 5, 3);
-    // Upright spear
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(gx + (offset < 0 ? -4 : 4), gy - 26, 1, 26);
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(gx + (offset < 0 ? -4 : 4), gy - 29, 1, 3);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(gx + (offset < 0 ? -4 : 4), gy - 30, 1, 1);
-  });
-
-  // 2. Emperor Sprite
-  const ey = railY;
-  // Imperial Purple/Wine Toga
-  ctx.fillStyle = PALETTE[4]; // imperial wine
-  ctx.fillRect(cx - 5, ey - 14, 11, 10);
-  ctx.fillStyle = PALETTE[3]; // crimson sash drape
-  ctx.fillRect(cx - 4, ey - 14, 4, 10);
-  ctx.fillStyle = PALETTE[0]; // gold embroidered border
-  ctx.fillRect(cx - 5, ey - 5, 11, 1);
-  ctx.fillRect(cx - 1, ey - 14, 1, 9);
-  // Gold Fibula shoulder clasp
-  ctx.fillStyle = PALETTE[15];
-  ctx.fillRect(cx - 4, ey - 13, 2, 2);
-
-  // Head and Laurel Wreath Crown
-  ctx.fillStyle = PALETTE[1]; // flesh tone
-  ctx.fillRect(cx - 3, ey - 20, 7, 6);
-  ctx.fillStyle = PALETTE[5]; // stern eyes slit
-  ctx.fillRect(cx - 1, ey - 18, 4, 1);
-  // Golden Laurel Crown
-  ctx.fillStyle = PALETTE[15];
-  ctx.fillRect(cx - 4, ey - 22, 9, 3);
-  ctx.fillStyle = PALETTE[0]; // gleaming laurel leaf points
-  ctx.fillRect(cx - 4, ey - 23, 2, 2);
-  ctx.fillRect(cx + 3, ey - 23, 2, 2);
-  ctx.fillRect(cx - 1, ey - 23, 3, 1);
-
-  // Hands & Arms according to posture
-  if (posture === 'standing') {
-    // Both hands resting on the balustrade rail
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(cx - 5, ey - 4, 3, 2);
-    ctx.fillRect(cx + 3, ey - 4, 3, 2);
-    ctx.fillStyle = PALETTE[15]; // gold imperial rings
-    ctx.fillRect(cx - 4, ey - 4, 1, 1);
-    ctx.fillRect(cx + 4, ey - 4, 1, 1);
-  } else if (posture === 'thumbs_up') {
-    // Left hand on rail
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(cx - 5, ey - 4, 3, 2);
-    // Right arm raised high extending a prominent THUMB UP
-    ctx.fillStyle = PALETTE[4]; // purple sleeve
-    ctx.fillRect(cx + 4, ey - 13, 4, 4);
-    ctx.fillStyle = PALETTE[1]; // forearm
-    ctx.fillRect(cx + 7, ey - 16, 3, 5);
-    // Fist & Thumb UP
-    ctx.fillRect(cx + 6, ey - 19, 5, 4); // fist
-    ctx.fillRect(cx + 8, ey - 24, 3, 6); // thumb pointing straight UP!
-    ctx.fillStyle = PALETTE[0]; // gleaming golden specular on thumb
-    ctx.fillRect(cx + 9, ey - 24, 1, 3);
-  } else if (posture === 'thumbs_down') {
-    // Left hand on rail
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(cx - 5, ey - 4, 3, 2);
-    // Right arm extended forward/outward with prominent THUMB DOWN
-    ctx.fillStyle = PALETTE[4]; // sleeve
-    ctx.fillRect(cx + 4, ey - 11, 4, 4);
-    ctx.fillStyle = PALETTE[1]; // forearm
-    ctx.fillRect(cx + 7, ey - 11, 5, 3);
-    // Fist & Thumb DOWN
-    ctx.fillRect(cx + 10, ey - 13, 5, 5); // fist
-    ctx.fillRect(cx + 12, ey - 8, 3, 6);  // thumb pointing sharply DOWN!
-    ctx.fillStyle = PALETTE[3]; // crimson death accent on thumb tip
-    ctx.fillRect(cx + 12, ey - 3, 3, 1);
-  }
-}
-
-export function drawEyeCutIn(
-  ctx: CanvasRenderingContext2D,
-  phaseTime: number,
-) {
-  // Middle 1/3 of screen width
-  const boxW = Math.floor(LOGIC_WIDTH / 3); // exactly 114px
-  const boxH = 50;
-  const boxX = Math.floor((LOGIC_WIDTH - boxW) / 2); // exactly 115px
-  const boxY = Math.floor((LOGIC_HEIGHT - boxH) / 2); // 71px
-
-  // Draw thick, low-saturation stone borders (#8C7A6B, #2A1B19)
-  ctx.fillStyle = '#2A1B19'; // dark charred outer border
-  ctx.fillRect(boxX - 4, boxY - 4, boxW + 8, boxH + 8);
-  ctx.fillStyle = '#8C7A6B'; // weathered stone inner border
-  ctx.fillRect(boxX - 2, boxY - 2, boxW + 4, boxH + 4);
-  ctx.fillStyle = '#2A1B19';
-  ctx.fillRect(boxX, boxY, boxW, boxH);
-
-  // CRITICAL: Restricted clipping rect inside box
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(boxX + 2, boxY + 2, boxW - 4, boxH - 4);
-  ctx.clip();
-
-  // Solid background inside box
-  ctx.fillStyle = '#1D1312';
-  ctx.fillRect(boxX, boxY, boxW, boxH);
-
-  // Animate procedural "speed lines" rapidly panning left-to-right
-  const speed = 360;
-  for (let i = 0; i < 18; i++) {
-    const lineY = boxY + 3 + i * 2.5;
-    const lineW = 10 + ((i * 13) % 28);
-    const lineX = boxX + ((i * 29 + phaseTime * speed) % (boxW + 40)) - 20;
-    ctx.fillStyle = i % 3 === 0 ? '#ded095' : i % 3 === 1 ? '#ffffff' : '#8C7A6B';
-    ctx.fillRect(lineX, lineY, lineW, 1);
-  }
-
-  // Draw highly detailed, procedural 16-bit headshot focusing purely on the Emperor's piercing eyes in the center
-  const cx = boxX + Math.floor(boxW / 2);
-  const cy = boxY + Math.floor(boxH / 2);
-
-  // Forehead shadow & golden laurel leaves on temples
-  ctx.fillStyle = '#3f363b';
-  ctx.fillRect(cx - 38, cy - 18, 76, 7);
-  ctx.fillStyle = '#1D1312';
-  ctx.fillRect(cx - 36, cy - 14, 72, 4);
-
-  // Golden laurel wreath leaves flanking temples
-  ctx.fillStyle = '#9c8053';
-  ctx.fillRect(cx - 38, cy - 16, 8, 3);
-  ctx.fillRect(cx + 30, cy - 16, 8, 3);
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(cx - 36, cy - 17, 5, 2);
-  ctx.fillRect(cx + 32, cy - 17, 5, 2);
-
-  // Heavy, stern furrowed brow lines
-  ctx.fillStyle = '#2A1B19';
-  ctx.fillRect(cx - 30, cy - 9, 26, 4);
-  ctx.fillRect(cx + 4, cy - 9, 26, 4);
-  // Center furrow wrinkle
-  ctx.fillRect(cx - 2, cy - 12, 4, 6);
-  ctx.fillRect(cx - 1, cy - 8, 2, 4);
-
-  // Flesh base around eye zone
-  ctx.fillStyle = '#cb9f6b';
-  ctx.fillRect(cx - 28, cy - 5, 23, 11);
-  ctx.fillRect(cx + 5, cy - 5, 23, 11);
-
-  // Nose bridge ridge between eyes
-  ctx.fillStyle = '#ba7654';
-  ctx.fillRect(cx - 3, cy - 6, 6, 18);
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(cx - 1, cy - 5, 2, 17);
-
-  // Eyes Pupil Shifting:
-  // After 1.0 second, animate pupil blocks shifting left, then right:
-  // 0.0 - 1.0s: center (0)
-  // 1.0 - 1.3s: shift left (-2)
-  // 1.3 - 1.6s: shift right (+2)
-  // 1.6s+: center (0) with piercing intensity
-  let pupilOffset = 0;
-  if (phaseTime >= 1.0 && phaseTime < 1.3) {
-    pupilOffset = -2;
-  } else if (phaseTime >= 1.3 && phaseTime < 1.6) {
-    pupilOffset = 2;
-  } else if (phaseTime >= 1.6) {
-    pupilOffset = 0;
-  }
-
-  // Left Eye (cx - 25 to cx - 9)
-  const leftEyeX = cx - 24;
-  const eyeY = cy - 2;
-  // Eye socket outline
-  ctx.fillStyle = '#2A1B19';
-  ctx.fillRect(leftEyeX - 1, eyeY - 2, 16, 8);
-  // White sclera
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(leftEyeX, eyeY - 1, 14, 6);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(leftEyeX + 2, eyeY, 10, 4);
-  // Iris & Pupil (shifts left/right)
-  const leftPupilX = leftEyeX + 5 + pupilOffset;
-  ctx.fillStyle = '#574b50';
-  ctx.fillRect(leftPupilX, eyeY - 1, 4, 6);
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(leftPupilX + 1, eyeY, 2, 4);
-  // Pupil glint
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(leftPupilX + 1, eyeY, 1, 1);
-
-  // Right Eye (cx + 9 to cx + 25)
-  const rightEyeX = cx + 10;
-  ctx.fillStyle = '#2A1B19';
-  ctx.fillRect(rightEyeX - 1, eyeY - 2, 16, 8);
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(rightEyeX, eyeY - 1, 14, 6);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(rightEyeX + 2, eyeY, 10, 4);
-  // Iris & Pupil (shifts left/right)
-  const rightPupilX = rightEyeX + 5 + pupilOffset;
-  ctx.fillStyle = '#574b50';
-  ctx.fillRect(rightPupilX, eyeY - 1, 4, 6);
-  ctx.fillStyle = '#000000';
-  ctx.fillRect(rightPupilX + 1, eyeY, 2, 4);
-  // Pupil glint
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(rightPupilX + 1, eyeY, 1, 1);
-
-  // Eye crease shadow & lower eyelids
-  ctx.fillStyle = '#ba7654';
-  ctx.fillRect(leftEyeX, eyeY + 5, 14, 1);
-  ctx.fillRect(rightEyeX, eyeY + 5, 14, 1);
-  ctx.fillStyle = '#8C7A6B';
-  ctx.fillRect(leftEyeX - 2, eyeY - 3, 18, 1);
-  ctx.fillRect(rightEyeX - 2, eyeY - 3, 18, 1);
-
-  ctx.restore();
-}
-
-function drawRomeInFlamesBackground(
-  ctx: CanvasRenderingContext2D,
-  animTimer: number,
-) {
-  // 1. Sky & Burning Atmospheric Background (Smoke & fire plumes)
-  ctx.fillStyle = '#1D1312';
-  ctx.fillRect(0, 0, LOGIC_WIDTH, 52);
-
-  // Gradient fire glow in sky
-  drawDitherRect(ctx, 0, 0, LOGIC_WIDTH, 20, '#6d3947', '#9e4a42', 0.5);
-  drawDitherRect(ctx, 0, 20, LOGIC_WIDTH, 24, '#9e4a42', '#ba7654', 0.5);
-
-  // Thick rising smoke plumes drifting across the burning sky
-  const smokeShift = Math.floor(animTimer * 12) % 40;
-  for (let sx = -20; sx < LOGIC_WIDTH + 40; sx += 48) {
-    const smX = sx + smokeShift;
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(smX, 6, 26, 18);
-    ctx.fillStyle = '#574b50';
-    ctx.fillRect(smX + 4, 10, 18, 14);
-  }
-
-  // 2. Burning Classic Roman Architecture: Stone Pillars and Semicircular Arches
-  ctx.fillStyle = '#574b50';
-  ctx.fillRect(0, 36, LOGIC_WIDTH, 26);
-  ctx.fillStyle = '#7f644b';
-  ctx.fillRect(0, 36, LOGIC_WIDTH, 2);
-
-  // Classic Roman Arches & Columns with flickering flames
-  for (let ax = 14; ax < LOGIC_WIDTH - 14; ax += 52) {
-    // Arch opening
-    ctx.fillStyle = '#2A1B19';
-    ctx.fillRect(ax + 6, 22, 28, 40);
-    // Arch Trim & Keystone
-    ctx.fillStyle = '#a4968d';
-    ctx.fillRect(ax + 4, 20, 32, 3);
-    ctx.fillRect(ax + 17, 18, 6, 4);
-
-    // Flickering flames licking up the stone pillars and archways
-    const fTick = (Math.floor(animTimer * 14) + ax) % 4;
-    const flameH = 6 + (fTick % 3) * 3;
-    ctx.fillStyle = '#9e4a42';
-    ctx.fillRect(ax + 8, 38 - flameH, 8, flameH);
-    ctx.fillRect(ax + 24, 38 - flameH, 8, flameH);
-    ctx.fillStyle = '#ba7654';
-    ctx.fillRect(ax + 10, 36 - flameH, 5, flameH - 1);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(ax + 11, 34 - flameH, 3, flameH - 3);
-
-    // Stone Pillars / Columns flanking arches
-    ctx.fillStyle = '#817475';
-    ctx.fillRect(ax, 22, 6, 40);
-    ctx.fillRect(ax + 34, 22, 6, 40);
-    ctx.fillStyle = '#a4968d';
-    ctx.fillRect(ax - 1, 20, 8, 3);
-    ctx.fillRect(ax + 33, 20, 8, 3);
-    ctx.fillRect(ax - 1, 60, 8, 2);
-    ctx.fillRect(ax + 33, 60, 8, 2);
-  }
-
-  // 3. Reinforced Iron-Banded Gate with Imperial Eagle Banner/Flag
-  const gx = 224;
-  const gy = 18;
-  const gw = 48;
-  const gh = 44;
-
-  ctx.fillStyle = '#3f363b';
-  ctx.fillRect(gx - 4, gy - 2, gw + 8, gh + 4);
-  ctx.fillStyle = '#574b50';
-  ctx.fillRect(gx, gy, gw, gh);
-  // Iron straps
-  ctx.fillStyle = '#1D1312';
-  ctx.fillRect(gx, gy + 8, gw, 3);
-  ctx.fillRect(gx, gy + 22, gw, 3);
-  ctx.fillRect(gx, gy + 36, gw, 3);
-  // Diagonal iron braces
-  ctx.fillRect(gx + 4, gy + 11, 16, 11);
-  ctx.fillRect(gx + 28, gy + 11, 16, 11);
-  ctx.fillRect(gx + 4, gy + 25, 16, 11);
-  ctx.fillRect(gx + 28, gy + 25, 16, 11);
-  // Center seam
-  ctx.fillStyle = '#090d16';
-  ctx.fillRect(gx + Math.floor(gw / 2) - 1, gy, 2, gh);
-
-  // Imperial Eagle Standard (Aquila) & Fluttering Flag
-  const poleX = gx + 54;
-  const poleY = gy - 16;
-  ctx.fillStyle = '#7f644b';
-  ctx.fillRect(poleX, poleY, 2, 58);
-  // Golden Aquila
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(poleX - 4, poleY - 5, 10, 4);
-  ctx.fillRect(poleX - 1, poleY - 8, 4, 4);
-  ctx.fillStyle = '#cb9f6b';
-  ctx.fillRect(poleX - 5, poleY - 4, 2, 2);
-  ctx.fillRect(poleX + 5, poleY - 4, 2, 2);
-
-  // Crimson banner with golden wreath flapping from crossbar
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(poleX - 12, poleY + 1, 14, 1);
-  const flagFlap = Math.floor(animTimer * 10) % 2 === 0 ? 1 : 0;
-  ctx.fillStyle = '#9e4a42';
-  ctx.fillRect(poleX - 12, poleY + 2, 12, 18);
-  ctx.fillRect(poleX - 11 + flagFlap, poleY + 20, 10, 3);
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(poleX - 9, poleY + 6, 6, 6);
-  ctx.fillStyle = '#9e4a42';
-  ctx.fillRect(poleX - 8, poleY + 7, 4, 4);
-
-  // 4. Scorched Arena Sand / Flagstone Ground
-  ctx.fillStyle = '#7f644b';
-  ctx.fillRect(0, 60, LOGIC_WIDTH, 6);
-  ctx.fillStyle = '#574b50';
-  ctx.fillRect(0, 65, LOGIC_WIDTH, 1);
-
-  ctx.fillStyle = '#574b50';
-  ctx.fillRect(0, 66, LOGIC_WIDTH, LOGIC_HEIGHT - 66);
-  drawDitherRect(ctx, 0, 66, LOGIC_WIDTH, LOGIC_HEIGHT - 66, '#574b50', '#3f363b', 0.5);
-  drawDitherRect(ctx, 20, 90, LOGIC_WIDTH - 40, 70, '#574b50', '#7f644b', 0.25);
-
-  // Glowing burning embers on the ground
-  for (let i = 0; i < 16; i++) {
-    const ex = (i * 23 + 17) % LOGIC_WIDTH;
-    const ey = 75 + ((i * 19 + 7) % (LOGIC_HEIGHT - 85));
-    const flicker = (Math.floor(animTimer * 16) + i) % 3;
-    ctx.fillStyle = flicker === 0 ? '#ded095' : flicker === 1 ? '#ba7654' : '#9e4a42';
-    ctx.fillRect(ex, ey, 2, 1);
-  }
-
-  // Rising embers and sparks
-  for (let i = 0; i < 12; i++) {
-    const px = (i * 31 + Math.sin(animTimer * 2 + i) * 15) % LOGIC_WIDTH;
-    const py = (LOGIC_HEIGHT - (animTimer * 35 + i * 22) % LOGIC_HEIGHT);
-    const pColor = i % 3 === 0 ? '#ded095' : i % 3 === 1 ? '#ba7654' : '#9e4a42';
-    ctx.fillStyle = pColor;
-    ctx.fillRect(Math.floor(px), Math.floor(py), 1, 1);
-  }
-}
-
-function drawFortifications(
-  ctx: CanvasRenderingContext2D,
-  fortifications: ArenaFortification[],
-  animTimer = 0,
-) {
-  for (const fort of fortifications) {
-    if (fort.type === 'river') {
-      ctx.fillStyle = PALETTE[2];
-      ctx.fillRect(fort.x - 4, fort.y, 4, fort.h);
-      ctx.fillRect(fort.x + fort.w, fort.y, 4, fort.h);
-      drawDitherRect(ctx, fort.x - 6, fort.y, 6, fort.h, PALETTE[2], PALETTE[1], 0.5);
-      drawDitherRect(ctx, fort.x + fort.w, fort.y, 6, fort.h, PALETTE[2], PALETTE[1], 0.5);
-      ctx.fillStyle = PALETTE[6];
-      ctx.fillRect(fort.x, fort.y, fort.w, fort.h);
-      ctx.fillStyle = PALETTE[7];
-      for (let ry = fort.y; ry < fort.y + fort.h; ry += 4) {
-        const waveShift = Math.sin(animTimer * 5 + ry * 0.4) * 3;
-        ctx.fillRect(fort.x + 2 + waveShift, ry, fort.w - 4, 2);
-      }
-      const foamTick = Math.floor(animTimer * 8);
-      ctx.fillStyle = PALETTE[0];
-      for (let fy = fort.y + 4; fy < fort.y + fort.h - 4; fy += 12) {
-        const fx = fort.x + 4 + ((fy * 13 + foamTick * 5) % Math.max(1, fort.w - 10));
-        ctx.fillRect(fx, fy, 4, 1);
-        ctx.fillRect(fx + 1, fy - 1, 2, 1);
-      }
-      ctx.fillStyle = PALETTE[10];
-      ctx.fillRect(fort.x + 6, fort.y + 24, 4, 3);
-      ctx.fillRect(fort.x + fort.w - 10, fort.y + 65, 5, 3);
-      ctx.fillRect(fort.x + 12, fort.y + 98, 4, 3);
-      ctx.fillStyle = PALETTE[8];
-      ctx.fillRect(fort.x - 2, fort.y + 35, 1, 6);
-      ctx.fillRect(fort.x + fort.w + 1, fort.y + 70, 1, 6);
-    } else if (fort.type === 'low_wall') {
-      drawDitherShadow(ctx, fort.x + fort.w / 2, fort.y + fort.h + 2, fort.w / 2 + 2, 3, PALETTE[5]);
-      ctx.fillStyle = PALETTE[10];
-      ctx.fillRect(fort.x, fort.y, fort.w, fort.h);
-      ctx.fillStyle = PALETTE[5];
-      for (let by = fort.y; by <= fort.y + fort.h; by += 8) {
-        ctx.fillRect(fort.x, by, fort.w, 1);
-        const stagger = (by / 8) % 2 === 0 ? fort.x + 4 : fort.x + 8;
-        ctx.fillRect(stagger, by, 1, 8);
-      }
-      ctx.fillStyle = PALETTE[11];
-      ctx.fillRect(fort.x - 1, fort.y, fort.w + 2, 3);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(fort.x - 1, fort.y, fort.w + 2, 1);
-      for (let cy = fort.y; cy < fort.y + fort.h; cy += 12) {
-        ctx.fillStyle = PALETTE[11];
-        ctx.fillRect(fort.x - 2, cy + 2, 2, 5);
-        ctx.fillStyle = PALETTE[5];
-        ctx.fillRect(fort.x - 2, cy + 7, 2, 1);
-      }
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(fort.x - 3, fort.y + 12, 2, 3);
-      ctx.fillRect(fort.x - 3, fort.y + 28, 2, 3);
-      ctx.fillStyle = PALETTE[11];
-      ctx.fillRect(fort.x - 4, fort.y + 13, 1, 1);
-      ctx.fillRect(fort.x - 4, fort.y + 29, 1, 1);
-    }
-  }
-}
-
-function drawRiverValleyBackground(
-  ctx: CanvasRenderingContext2D,
-  fortifications?: ArenaFortification[],
-  animTimer = 0,
-) {
-  // Twilight Sky over River Valley
-  ctx.fillStyle = '#47505c';
-  ctx.fillRect(0, 0, LOGIC_WIDTH, 18);
-  drawDitherRect(ctx, 0, 16, LOGIC_WIDTH, 10, '#47505c', '#6d3947', 0.5);
-  ctx.fillStyle = '#6d3947';
-  ctx.fillRect(0, 24, LOGIC_WIDTH, 12);
-  drawDitherRect(ctx, 0, 32, LOGIC_WIDTH, 10, '#6d3947', '#cb9f6b', 0.5);
-  ctx.fillStyle = '#cb9f6b';
-  ctx.fillRect(0, 40, LOGIC_WIDTH, 8);
-
-  // Distant river bluffs
-  ctx.fillStyle = '#3f363b';
-  for (let x = 0; x < LOGIC_WIDTH; x += 18) {
-    const hillH = 10 + Math.round(Math.sin(x * 0.05) * 5);
-    ctx.fillRect(x, 48 - hillH, 18, hillH);
-  }
-  ctx.fillStyle = '#55796f';
-  for (let x = 0; x < LOGIC_WIDTH; x += 12) {
-    const ridgeH = 6 + Math.round(Math.cos(x * 0.08) * 3);
-    ctx.fillRect(x, 50 - ridgeH, 12, ridgeH);
-  }
-
-  // Weeping Willow Trees along upper riverbank
-  for (let tx = 14; tx < LOGIC_WIDTH - 14; tx += 48) {
-    ctx.fillStyle = '#7f644b';
-    ctx.fillRect(tx + 4, 38, 3, 14);
-    ctx.fillStyle = '#55796f';
-    ctx.fillRect(tx - 2, 28, 15, 10);
-    ctx.fillStyle = '#88997a';
-    ctx.fillRect(tx, 26, 11, 4);
-    const sway = Math.sin(animTimer * 2.5 + tx * 0.2) > 0 ? 1 : 0;
-    ctx.fillStyle = '#6f705a';
-    ctx.fillRect(tx - 3 + sway, 36, 2, 9);
-    ctx.fillRect(tx + 1 + sway, 37, 2, 10);
-    ctx.fillRect(tx + 7 + sway, 36, 2, 11);
-    ctx.fillRect(tx + 12 + sway, 37, 2, 8);
-    ctx.fillStyle = '#88997a';
-    ctx.fillRect(tx - 3 + sway, 44, 2, 2);
-    ctx.fillRect(tx + 7 + sway, 46, 2, 2);
-  }
-
-  ctx.fillStyle = '#7f644b';
-  ctx.fillRect(0, 50, LOGIC_WIDTH, 4);
-
-  // Open river valley floor
-  ctx.fillStyle = '#7f644b';
-  ctx.fillRect(0, 54, LOGIC_WIDTH, LOGIC_HEIGHT - 54);
-  drawDitherRect(ctx, 0, 54, LOGIC_WIDTH, LOGIC_HEIGHT - 54, '#7f644b', '#88997a', 0.25);
-  drawDitherRect(ctx, 20, 75, LOGIC_WIDTH - 40, LOGIC_HEIGHT - 85, '#7f644b', '#cb9f6b', 0.25);
-
-  // Rushing river water channel
-  const rivX = 136;
-  const rivW = 54;
-  ctx.fillStyle = '#ba7654';
-  ctx.fillRect(rivX - 6, 54, 6, LOGIC_HEIGHT - 54);
-  ctx.fillRect(rivX + rivW, 54, 6, LOGIC_HEIGHT - 54);
-  ctx.fillStyle = '#47505c';
-  ctx.fillRect(rivX, 54, rivW, LOGIC_HEIGHT - 54);
-  ctx.fillStyle = '#55796f';
-  for (let ry = 54; ry < LOGIC_HEIGHT; ry += 6) {
-    const wave = Math.sin(animTimer * 6 + ry * 0.4) * 4;
-    ctx.fillRect(rivX + 2 + wave, ry, rivW - 4, 3);
-  }
-  const foam = Math.floor(animTimer * 10);
-  ctx.fillStyle = '#ded095';
-  for (let fy = 58; fy < LOGIC_HEIGHT - 6; fy += 14) {
-    const fx = rivX + 4 + ((fy * 17 + foam * 6) % (rivW - 12));
-    ctx.fillRect(fx, fy, 5, 1);
-    ctx.fillRect(fx + 1, fy - 1, 3, 1);
-  }
-
-  if (fortifications && fortifications.length > 0) {
-    drawFortifications(ctx, fortifications, animTimer);
-  }
-}
-
-function drawAlpineRampartBackground(
-  ctx: CanvasRenderingContext2D,
-  fortifications?: ArenaFortification[],
-  animTimer = 0,
-) {
-  // Cold Mountain Sky
-  ctx.fillStyle = '#47505c';
-  ctx.fillRect(0, 0, LOGIC_WIDTH, 22);
-  drawDitherRect(ctx, 0, 18, LOGIC_WIDTH, 14, '#47505c', '#817475', 0.5);
-  ctx.fillStyle = '#817475';
-  ctx.fillRect(0, 30, LOGIC_WIDTH, 18);
-
-  // Snowy mountain crags
-  for (let cx = -10; cx < LOGIC_WIDTH + 20; cx += 36) {
-    const cragH = 26 + Math.round(Math.sin(cx * 0.12) * 8);
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(cx, 48 - cragH, 36, cragH);
-    ctx.fillStyle = '#574b50';
-    ctx.fillRect(cx + 6, 48 - cragH + 4, 24, cragH - 4);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(cx + 10, 48 - cragH, 16, 6);
-    ctx.fillRect(cx + 14, 48 - cragH - 3, 8, 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(cx + 12, 48 - cragH, 12, 3);
-    ctx.fillRect(cx + 15, 48 - cragH - 2, 6, 2);
-  }
-
-  // Drifting cold mist / mountain fog
-  const fogShift = Math.floor(animTimer * 10) % 60;
-  for (let fx = -40; fx < LOGIC_WIDTH + 60; fx += 55) {
-    ctx.fillStyle = 'rgba(215, 225, 235, 0.28)';
-    ctx.fillRect(fx + fogShift, 24, 44, 7);
-    ctx.fillRect(fx + fogShift + 6, 28, 32, 5);
-  }
-
-  // Snowy Pine & Fir Trees
-  for (let px = 8; px < LOGIC_WIDTH - 8; px += 26) {
-    ctx.fillStyle = '#3f363b';
-    ctx.fillRect(px + 4, 40, 2, 10);
-    ctx.fillStyle = '#55796f';
-    ctx.fillRect(px, 34, 10, 8);
-    ctx.fillRect(px + 2, 28, 6, 7);
-    ctx.fillRect(px + 3, 24, 4, 5);
-    ctx.fillStyle = '#ded095';
-    ctx.fillRect(px, 34, 10, 2);
-    ctx.fillRect(px + 2, 28, 6, 2);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(px + 3, 23, 4, 2);
-  }
-
-  ctx.fillStyle = '#817475';
-  ctx.fillRect(0, 48, LOGIC_WIDTH, 4);
-
-  // Frost-covered stone rampart pavers & snow
-  ctx.fillStyle = '#817475';
-  ctx.fillRect(0, 52, LOGIC_WIDTH, LOGIC_HEIGHT - 52);
-  drawDitherRect(ctx, 0, 52, LOGIC_WIDTH, LOGIC_HEIGHT - 52, '#817475', '#574b50', 0.5);
-
-  ctx.fillStyle = '#3f363b';
-  for (let ry = 62; ry < LOGIC_HEIGHT; ry += 14) {
-    ctx.fillRect(0, ry, LOGIC_WIDTH, 1);
-    for (let rx = 12; rx < LOGIC_WIDTH; rx += 28) {
-      const stag = (ry / 14) % 2 === 0 ? 0 : 14;
-      ctx.fillRect(rx + stag, ry, 1, 14);
-    }
-  }
-
-  // Snow dusting patches
-  ctx.fillStyle = '#ded095';
-  for (let i = 0; i < 18; i++) {
-    const sx = (i * 29 + 17) % (LOGIC_WIDTH - 20);
-    const sy = 60 + ((i * 23 + 11) % (LOGIC_HEIGHT - 70));
-    ctx.fillRect(sx, sy, 8, 2);
-    ctx.fillRect(sx + 2, sy - 1, 4, 1);
-  }
-
-  if (fortifications && fortifications.length > 0) {
-    drawFortifications(ctx, fortifications, animTimer);
-  }
-}
-
-function drawDevoteeSprite(
-  ctx: CanvasRenderingContext2D,
-  devotee: DevoteeState,
-  animTimer: number,
-) {
-  if (!devotee.active) return;
-  const dx = Math.round(devotee.x);
-  const dy = Math.round(devotee.y);
-
-  ctx.save();
-  ctx.translate(dx, dy);
-  if (devotee.flipX) ctx.scale(-1, 1);
-
-  // Shadow
-  drawDitherShadow(ctx, 0, 1, 6, 2, PALETTE[5]);
-
-  const bounce = devotee.state === 'cheering'
-    ? Math.round(Math.abs(Math.sin(animTimer * 8)) * 3)
-    : devotee.state === 'entering' || devotee.state === 'leaving'
-      ? Math.round(Math.abs(Math.sin(animTimer * 12)) * 2)
-      : 0;
-
-  const py = -bounce;
-
-  // Flamboyant tunicked supporter
-  ctx.fillStyle = PALETTE[14];
-  ctx.fillRect(-2, py - 3, 2, 3);
-  ctx.fillRect(1, py - 3, 2, 3);
-
-  // Saffron/gold pleated tunic
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(-4, py - 16, 8, 13);
-  ctx.fillStyle = PALETTE[3];
-  ctx.fillRect(-4, py - 15, 3, 12);
-  ctx.fillRect(-2, py - 12, 5, 2);
-  ctx.fillRect(-4, py - 4, 8, 1);
-
-  // Torso / Neck Gold Medallion
-  ctx.fillStyle = PALETTE[15];
-  ctx.fillRect(-1, py - 14, 2, 2);
-
-  // Cheering arms
-  if (devotee.state === 'cheering') {
-    const wave = Math.sin(animTimer * 10) > 0 ? 1 : -1;
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-6, py - 20 + wave, 2, 7);
-    ctx.fillRect(-7, py - 22 + wave, 3, 2);
-    ctx.fillRect(4, py - 20 - wave, 2, 7);
-    ctx.fillRect(4, py - 22 - wave, 3, 2);
-  } else {
-    const wArm = Math.sin(animTimer * 12) > 0 ? 1 : -1;
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-5, py - 12 + wArm, 2, 6);
-    ctx.fillRect(3, py - 12 - wArm, 2, 6);
-  }
-
-  // Head & curls
-  ctx.fillStyle = PALETTE[1];
-  ctx.fillRect(-3, py - 22, 6, 6);
-  ctx.fillStyle = PALETTE[15];
-  ctx.fillRect(-4, py - 25, 8, 4);
-  ctx.fillRect(-4, py - 23, 2, 4);
-  ctx.fillRect(2, py - 23, 2, 4);
-
-  // Golden browband
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(-4, py - 23, 8, 1);
-  ctx.fillRect(-2, py - 24, 4, 1);
-
-  // Beaming face
-  ctx.fillStyle = PALETTE[5];
-  ctx.fillRect(-1, py - 20, 1, 1);
-  ctx.fillRect(1, py - 20, 1, 1);
-  ctx.fillStyle = PALETTE[3];
-  ctx.fillRect(-1, py - 18, 3, 1);
-
-  ctx.restore();
-}
-
-// ============================================================================
-// 5 ARENA CROWD TIERS (VISUAL & ACOUSTIC PROGRESSION)
-// Tier 1: Empty / The Dust Bowl (0-3 Battles completed)
-// Tier 2: Sparse / Word of Mouth (Podium 2 / 4-7 Battles)
-// Tier 3: Half-Full / Rising Renown (Podium 3 / 8-12 Battles)
-// Tier 4: Packed / Colosseum Scale (Podium 4 / 13-17 Battles)
-// Tier 5: Imperial Apex (Podium 5 / Boss / 18+ Battles)
-// ============================================================================
-
-export function getCrowdTier(
-  unlockedTierIndex: number,
-  totalBattlesWon: number,
-  isBossOrSpecial = false,
-): 1 | 2 | 3 | 4 | 5 {
-  if (isBossOrSpecial || unlockedTierIndex >= 4 || totalBattlesWon >= 18) {
-    return 5;
-  }
-  if (unlockedTierIndex >= 3 || totalBattlesWon >= 13) {
-    return 4;
-  }
-  if (unlockedTierIndex >= 2 || totalBattlesWon >= 8) {
-    return 3;
-  }
-  if (unlockedTierIndex >= 1 || totalBattlesWon >= 4) {
-    return 2;
-  }
-  return 1;
-}
-
-export function drawArenaCrowdStands(
-  ctx: CanvasRenderingContext2D,
-  tier: 1 | 2 | 3 | 4 | 5,
-  animTimer: number,
-  mapTheme: ArenaMapTheme = 'standard',
-) {
-  // Bleachers stone steps base (y: 6 to 46)
-  ctx.fillStyle = PALETTE[5];
-  ctx.fillRect(0, 0, LOGIC_WIDTH, 48);
-
-  for (let ty = 6; ty < 46; ty += 8) {
-    ctx.fillStyle = PALETTE[6];
-    ctx.fillRect(0, ty, LOGIC_WIDTH, 2);
-    ctx.fillStyle = PALETTE[9];
-    ctx.fillRect(0, ty + 2, LOGIC_WIDTH, 6);
-  }
-
-  drawDitherRect(ctx, 0, 12, LOGIC_WIDTH, 28, PALETTE[5], PALETTE[9], 0.5);
-
-  const safeAnim = animTimer || 0;
-
-  // TIER 1: EMPTY / THE DUST BOWL (0-3 Battles completed)
-  if (tier === 1) {
-    // 1. Cracks and overgrown weeds / moss through stone cracks
-    const weedTufts = [
-      [24, 14], [52, 22], [88, 30], [122, 38], [134, 18],
-      [212, 14], [244, 22], [280, 30], [314, 38], [330, 22]
-    ];
-    weedTufts.forEach(([wx, wy]) => {
-      ctx.fillStyle = PALETTE[12]; // mossy olive drab
-      ctx.fillRect(wx, wy, 3, 2);
-      ctx.fillStyle = PALETTE[8];  // sage olive
-      ctx.fillRect(wx + 1, wy - 1, 1, 3);
-    });
-
-    // 2. Stray dogs on empty stone stands
-    // Dog 1: Curled up asleep on stone bleacher at x = 74, y = 28
-    const breathOffset = Math.round(Math.sin(safeAnim * 2.5) * 0.5);
-    ctx.fillStyle = PALETTE[14]; // raw umber dog body
-    ctx.fillRect(72, 28 + breathOffset, 8, 4);
-    ctx.fillRect(74, 26 + breathOffset, 4, 3); // head
-    ctx.fillStyle = PALETTE[1];  // tan fur patch
-    ctx.fillRect(73, 29 + breathOffset, 5, 2);
-    ctx.fillStyle = PALETTE[5];  // nose & ears
-    ctx.fillRect(78, 27 + breathOffset, 1, 1);
-    ctx.fillRect(73, 26 + breathOffset, 1, 2);
-    // Tail twitch
-    const tailTwitch = Math.floor(safeAnim * 4) % 3 === 0 ? 1 : 0;
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(70, 30 + tailTwitch, 2, 1);
-
-    // Dog 2: Thin stray hound sniffing stone step at x = 265, y = 36
-    const sniffBob = Math.round(Math.sin(safeAnim * 5) * 1);
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(264, 34, 7, 3);
-    ctx.fillRect(261, 35 + sniffBob, 3, 2); // snout down
-    ctx.fillStyle = PALETTE[5]; // legs
-    ctx.fillRect(264, 37, 1, 2);
-    ctx.fillRect(269, 37, 1, 2);
-
-    // 3. Exactly 1-2 scattered solitary loan sharks / bored watchers in dark cloaks
-    // Lone watcher 1: Cloaked loan shark slouched at x = 32, y = 18
-    ctx.fillStyle = PALETTE[5];  // dark cloak
-    ctx.fillRect(30, 16, 6, 7);
-    ctx.fillRect(31, 13, 4, 4); // cowl
-    ctx.fillStyle = PALETTE[1];  // face in shadow
-    ctx.fillRect(32, 15, 2, 1);
-    ctx.fillStyle = PALETTE[10]; // parchment abacus ledger
-    ctx.fillRect(34, 18, 3, 3);
-
-    // Lone watcher 2: Bored spectator leaning back against back stone wall at x = 295, y = 18
-    ctx.fillStyle = PALETTE[9];
-    ctx.fillRect(293, 16, 5, 7);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(294, 13, 3, 4);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(293, 12, 5, 2);
-  }
-
-  // TIER 2: SPARSE / WORD OF MOUTH (Podium 2 / 4-7 Battles)
-  else if (tier === 2) {
-    // Small clusters of 2-3 locals, gamblers, low-level thugs on lower stone bleachers
-    // Weeds in upper corners
-    ctx.fillStyle = PALETTE[8];
-    ctx.fillRect(16, 12, 2, 2);
-    ctx.fillRect(324, 12, 2, 2);
-
-    // Cluster 1 (Left Lower): 2 thugs leaning forward on stone rail (x = 44, y = 32)
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(40, 31, 5, 7);
-    ctx.fillRect(41, 28, 3, 3);
-    ctx.fillStyle = PALETTE[2];
-    ctx.fillRect(46, 30, 5, 8);
-    ctx.fillRect(47, 27, 3, 3);
-    ctx.fillStyle = PALETTE[1]; // flesh
-    ctx.fillRect(42, 29, 2, 1);
-    ctx.fillRect(48, 28, 2, 1);
-
-    // Cluster 2 (Left Middle): 3 gamblers huddled around stone slab tossing dice (x = 94, y = 34)
-    ctx.fillStyle = PALETTE[1]; // sand ochre tunic
-    ctx.fillRect(90, 32, 4, 6);
-    ctx.fillRect(91, 29, 3, 3);
-    ctx.fillStyle = PALETTE[4]; // wine cloak
-    ctx.fillRect(95, 31, 4, 7);
-    ctx.fillRect(96, 28, 3, 3);
-    ctx.fillStyle = PALETTE[5]; // dark hood
-    ctx.fillRect(100, 32, 4, 6);
-    ctx.fillRect(100, 29, 4, 3);
-    // Dice on step
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(95, 37, 1, 1);
-    ctx.fillRect(97, 36, 1, 1);
-
-    // Cluster 3 (Right Lower): 2 locals watching with clay cups (x = 230, y = 32)
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(228, 31, 5, 7);
-    ctx.fillRect(229, 28, 3, 3);
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(234, 30, 5, 8);
-    ctx.fillRect(235, 27, 3, 3);
-    ctx.fillStyle = PALETTE[2]; // cup
-    ctx.fillRect(233, 33, 2, 2);
-
-    // Cluster 4 (Right Middle): 2 gamblers gesturing (x = 285, y = 28)
-    const armWave = Math.sin(safeAnim * 6) > 0 ? 1 : 0;
-    ctx.fillStyle = PALETTE[3]; // crimson tunic
-    ctx.fillRect(282, 27, 4, 7);
-    ctx.fillRect(282, 24, 3, 3);
-    ctx.fillStyle = PALETTE[1]; // waving arm
-    ctx.fillRect(285, 25 - armWave, 2, 3);
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(288, 28, 5, 6);
-    ctx.fillRect(289, 25, 3, 3);
-  }
-
-  // TIER 3: HALF-FULL / RISING RENOWN (Podium 3 / 8-12 Battles)
-  else if (tier === 3) {
-    // Busy buzzing arena. Merchants, minor nobles, soldiers fill lower/middle tiers.
-    // Left bleachers spectator rows:
-    const leftCrowdCols = [
-      [14, 34, 1], [22, 32, 4], [32, 34, 2], [42, 26, 3], [52, 28, 1],
-      [64, 34, 6], [74, 32, 1], [86, 26, 4], [96, 28, 2], [108, 34, 1],
-      [118, 32, 3], [128, 26, 6]
-    ];
-    leftCrowdCols.forEach(([cx, cy, colorIdx]) => {
-      const bob = Math.round(Math.sin(safeAnim * 4 + cx) * 0.5);
-      ctx.fillStyle = PALETTE[colorIdx];
-      ctx.fillRect(cx, cy + bob, 5, 7);
-      ctx.fillStyle = PALETTE[1]; // flesh head
-      ctx.fillRect(cx + 1, cy - 3 + bob, 3, 3);
-      ctx.fillStyle = PALETTE[5]; // hair/cap
-      ctx.fillRect(cx + 1, cy - 4 + bob, 3, 1);
-    });
-
-    // Right bleachers spectator rows:
-    const rightCrowdCols = [
-      [208, 34, 3], [218, 32, 1], [228, 26, 4], [238, 34, 6], [248, 28, 2],
-      [258, 32, 1], [268, 34, 3], [278, 26, 1], [290, 32, 4], [302, 34, 2],
-      [314, 28, 6], [326, 32, 1]
-    ];
-    rightCrowdCols.forEach(([cx, cy, colorIdx]) => {
-      const bob = Math.round(Math.sin(safeAnim * 4 + cx) * 0.5);
-      ctx.fillStyle = PALETTE[colorIdx];
-      ctx.fillRect(cx, cy + bob, 5, 7);
-      ctx.fillStyle = PALETTE[1];
-      ctx.fillRect(cx + 1, cy - 3 + bob, 3, 3);
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(cx + 1, cy - 4 + bob, 3, 1);
-    });
-
-    // Pacing vendors on stone steps
-    // Vendor 1 on left stairs pacing with wine amphora
-    const vend1X = Math.round(65 + Math.sin(safeAnim * 1.6) * 14);
-    ctx.fillStyle = PALETTE[0];  // cream linen tunic
-    ctx.fillRect(vend1X, 20, 5, 7);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(vend1X + 1, 17, 3, 3);
-    ctx.fillStyle = PALETTE[2];  // terracotta amphora
-    ctx.fillRect(vend1X + 4, 18, 3, 5);
-
-    // Vendor 2 on right stairs pacing with bread/grapes tray
-    const vend2X = Math.round(275 - Math.sin(safeAnim * 1.6) * 14);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(vend2X, 20, 5, 7);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(vend2X + 1, 17, 3, 3);
-    ctx.fillStyle = PALETTE[14]; // wooden tray
-    ctx.fillRect(vend2X - 3, 21, 6, 2);
-    ctx.fillStyle = PALETTE[0];  // bread
-    ctx.fillRect(vend2X - 2, 20, 4, 1);
-  }
-
-  // TIER 4: PACKED / THE COLOSSEUM SCALE (Podium 4 / 13-17 Battles)
-  else if (tier === 4) {
-    // Dense double rows of spectators across all steps
-    for (let bx = 6; bx <= 138; bx += 8) {
-      for (let by = 16; by <= 38; by += 10) {
-        const cIdx = ((bx * 7 + by * 13) % 4 === 0) ? 3 : ((bx + by) % 3 === 0 ? 0 : 4);
-        const cheerPulse = Math.sin(safeAnim * 8 + bx * 0.4) > 0.4 ? 1 : 0;
-        ctx.fillStyle = PALETTE[cIdx];
-        ctx.fillRect(bx, by - cheerPulse, 6, 7);
-        ctx.fillStyle = PALETTE[1];
-        ctx.fillRect(bx + 1, by - 3 - cheerPulse, 4, 3);
-        ctx.fillStyle = PALETTE[5];
-        ctx.fillRect(bx + 1, by - 4 - cheerPulse, 4, 1);
-        if (cheerPulse > 0) {
-          ctx.fillStyle = PALETTE[1];
-          ctx.fillRect(bx + 5, by - 5, 1, 3);
-        }
-      }
-    }
-
-    for (let bx = 204; bx <= 332; bx += 8) {
-      for (let by = 16; by <= 38; by += 10) {
-        const cIdx = ((bx * 7 + by * 13) % 4 === 0) ? 3 : ((bx + by) % 3 === 0 ? 0 : 4);
-        const cheerPulse = Math.sin(safeAnim * 8 + bx * 0.4) > 0.4 ? 1 : 0;
-        ctx.fillStyle = PALETTE[cIdx];
-        ctx.fillRect(bx, by - cheerPulse, 6, 7);
-        ctx.fillStyle = PALETTE[1];
-        ctx.fillRect(bx + 1, by - 3 - cheerPulse, 4, 3);
-        ctx.fillStyle = PALETTE[5];
-        ctx.fillRect(bx + 1, by - 4 - cheerPulse, 4, 1);
-        if (cheerPulse > 0) {
-          ctx.fillStyle = PALETTE[1];
-          ctx.fillRect(bx, by - 5, 1, 3);
-        }
-      }
-    }
-
-    // Shaded VIP boxes with purple awnings on upper tiers
-    [26, 94, 235, 302].forEach((vx) => {
-      ctx.fillStyle = PALETTE[4]; // imperial wine canopy
-      ctx.fillRect(vx - 6, 8, 20, 5);
-      ctx.fillStyle = PALETTE[15]; // gold trim
-      ctx.fillRect(vx - 6, 12, 20, 1);
-      ctx.fillStyle = PALETTE[14]; // timber posts
-      ctx.fillRect(vx - 6, 12, 1, 6);
-      ctx.fillRect(vx + 13, 12, 1, 6);
-    });
-
-    // Hanging Crimson & Gold Imperial Banners draped over stone railings
-    [24, 66, 114, 224, 272, 318].forEach((bx) => {
-      ctx.fillStyle = PALETTE[3]; // crimson banner
-      ctx.fillRect(bx, 42, 10, 12);
-      ctx.fillStyle = PALETTE[15]; // gold fringe & laurel motif
-      ctx.fillRect(bx, 53, 10, 1);
-      ctx.fillRect(bx + 3, 45, 4, 4);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(bx + 4, 46, 2, 2);
-    });
-
-    // Torchlight on stone pillars glinting off hundreds of spectators
-    [12, 138, 204, 332].forEach((tx, idx) => {
-      ctx.fillStyle = PALETTE[14]; // bracket
-      ctx.fillRect(tx, 22, 2, 6);
-      ctx.fillStyle = PALETTE[15]; // sconce
-      ctx.fillRect(tx - 1, 21, 4, 2);
-      // Flickering flame pixels
-      const tf = (Math.floor(safeAnim * 14) + idx * 3) % 3;
-      ctx.fillStyle = tf === 0 ? '#ffffff' : PALETTE[0];
-      ctx.fillRect(tx, 18, 2, 3);
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(tx + (tf === 1 ? -1 : 1), 17, 1, 2);
-    });
-  }
-
-  // TIER 5: THE IMPERIAL APEX (Podium 5 & Championship Bouts / Emperor Duel / Slave Revolt)
-  else {
-    // Absolute pandemonium! Wall-to-wall cheering crowd, billowing standards, jumping spectators
-    for (let bx = 4; bx <= 140; bx += 6) {
-      for (let by = 12; by <= 40; by += 8) {
-        const cIdx = ((bx * 11 + by) % 5 === 0) ? 3 : ((bx + by) % 3 === 0 ? 0 : (by % 16 === 0 ? 15 : 4));
-        const jumpOffset = Math.sin(safeAnim * 12 + bx * 0.6) > 0.2 ? 2 : 0;
-        ctx.fillStyle = PALETTE[cIdx];
-        ctx.fillRect(bx, by - jumpOffset, 5, 7);
-        ctx.fillStyle = PALETTE[1];
-        ctx.fillRect(bx + 1, by - 3 - jumpOffset, 3, 3);
-        ctx.fillStyle = PALETTE[5];
-        ctx.fillRect(bx + 1, by - 4 - jumpOffset, 3, 1);
-
-        // Raised arms / fists pumping in air
-        if (jumpOffset > 0) {
-          ctx.fillStyle = PALETTE[1];
-          ctx.fillRect(bx - 1, by - 5, 1, 4);
-          ctx.fillRect(bx + 4, by - 5, 1, 4);
-          // Waving scarves in air
-          if ((bx + by) % 6 === 0) {
-            ctx.fillStyle = PALETTE[3];
-            ctx.fillRect(bx + 4, by - 7, 3, 2);
-          }
-        }
-      }
-    }
-
-    for (let bx = 202; bx <= 338; bx += 6) {
-      for (let by = 12; by <= 40; by += 8) {
-        const cIdx = ((bx * 11 + by) % 5 === 0) ? 3 : ((bx + by) % 3 === 0 ? 0 : (by % 16 === 0 ? 15 : 4));
-        const jumpOffset = Math.sin(safeAnim * 12 + bx * 0.6) > 0.2 ? 2 : 0;
-        ctx.fillStyle = PALETTE[cIdx];
-        ctx.fillRect(bx, by - jumpOffset, 5, 7);
-        ctx.fillStyle = PALETTE[1];
-        ctx.fillRect(bx + 1, by - 3 - jumpOffset, 3, 3);
-        ctx.fillStyle = PALETTE[5];
-        ctx.fillRect(bx + 1, by - 4 - jumpOffset, 3, 1);
-
-        if (jumpOffset > 0) {
-          ctx.fillStyle = PALETTE[1];
-          ctx.fillRect(bx - 1, by - 5, 1, 4);
-          ctx.fillRect(bx + 4, by - 5, 1, 4);
-          if ((bx + by) % 6 === 0) {
-            ctx.fillStyle = PALETTE[0];
-            ctx.fillRect(bx - 2, by - 7, 3, 2);
-          }
-        }
-      }
-    }
-
-    // Spectators hanging off stone archways and pillars
-    [8, 140, 202, 334].forEach((px, idx) => {
-      // Pillar climber
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(px, 12, 4, 18);
-      ctx.fillStyle = PALETTE[1]; // hanging spectator
-      ctx.fillRect(px + (idx % 2 === 0 ? 4 : -4), 16, 4, 7);
-      ctx.fillStyle = PALETTE[3]; // red tunic
-      ctx.fillRect(px + (idx % 2 === 0 ? 4 : -4), 18, 4, 5);
-      ctx.fillStyle = PALETTE[1]; // grasping arm
-      ctx.fillRect(px + (idx % 2 === 0 ? 1 : 1), 15, 3, 2);
-    });
-
-    // Imperial Aquila Standards & Gold Billowing Banners along entire railing
-    for (let bx = 16; bx <= 130; bx += 28) {
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(bx, 42, 16, 14);
-      ctx.fillStyle = PALETTE[15]; // gold eagle Aquila
-      ctx.fillRect(bx + 4, 45, 8, 5);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(bx, 55, 16, 1);
-    }
-    for (let bx = 212; bx <= 326; bx += 28) {
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(bx, 42, 16, 14);
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(bx + 4, 45, 8, 5);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(bx, 55, 16, 1);
-    }
-
-    // Monumental Braziers roaring with golden flames on corner platforms
-    [10, 138, 204, 332].forEach((bx, idx) => {
-      ctx.fillStyle = PALETTE[15]; // bronze tripod bowl
-      ctx.fillRect(bx - 3, 22, 8, 4);
-      ctx.fillStyle = PALETTE[14];
-      ctx.fillRect(bx - 2, 26, 6, 6);
-      // Blazing flames
-      const bf = (Math.floor(safeAnim * 16) + idx * 4) % 4;
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(bx - 2, 16, 6, 6);
-      ctx.fillStyle = PALETTE[2];
-      ctx.fillRect(bx - 1, 14, 4, 5);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(bx, 13, 2, 4);
-
-      // Rising spark pixels
-      if (bf === 0) {
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(bx + (idx % 2 === 0 ? 1 : -1), 10, 1, 1);
-      }
-    });
-  }
-}
-
-function drawCleanArenaBackground(
-  ctx: CanvasRenderingContext2D,
-  emperorPosture: 'standing' | 'thumbs_up' | 'thumbs_down' = 'standing',
-  isEmptyBalcony = false,
-  mapTheme: ArenaMapTheme = 'standard',
-  fortifications?: ArenaFortification[],
-  animTimer = 0,
-  crowdTier: 1 | 2 | 3 | 4 | 5 = 1,
-) {
-  // Render Dynamic Visual Crowd Tier (Tiers 1 to 5)
-  drawArenaCrowdStands(ctx, crowdTier, animTimer, mapTheme);
-  for (let px = 6; px < LOGIC_WIDTH - 6; px += 22) {
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(px, 16, 8, 18);
-    ctx.fillStyle = PALETTE[7];
-    ctx.fillRect(px + 1, 18, 6, 14);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(px + 2, 14, 4, 3);
-    ctx.fillRect(px + 3, 12, 2, 2);
-  }
-
-  // Imperial Balcony in Center
-  ctx.fillStyle = PALETTE[4];
-  ctx.fillRect(146, 12, 52, 24);
-  ctx.fillStyle = PALETTE[3];
-  ctx.fillRect(146, 12, 52, 4);
-
-  if (isEmptyBalcony) {
-    drawEmptyEmperorBalconySprite(ctx, 172, 24);
-  } else {
-    drawEmperorBalconySprite(ctx, 172, 24, emperorPosture);
-  }
-
-  ctx.fillStyle = PALETTE[15];
-  ctx.fillRect(148, 22, 2, 14);
-  ctx.fillRect(164, 22, 2, 14);
-  ctx.fillRect(180, 22, 2, 14);
-  ctx.fillRect(196, 22, 2, 14);
-  ctx.fillStyle = PALETTE[10];
-  ctx.fillRect(146, 23, 52, 2);
-
-  // Wall perimeter barrier
-  ctx.fillStyle = PALETTE[10];
-  ctx.fillRect(0, 48, LOGIC_WIDTH, 12);
-  ctx.fillStyle = PALETTE[11];
-  ctx.fillRect(0, 48, LOGIC_WIDTH, 2);
-  ctx.fillStyle = PALETTE[5];
-  ctx.fillRect(0, 59, LOGIC_WIDTH, 1);
-
-  // Golden Sand Pit Arena Floor
-  ctx.fillStyle = PALETTE[1];
-  ctx.fillRect(0, 60, LOGIC_WIDTH, LOGIC_HEIGHT - 60);
-
-  if (mapTheme === 'standard') {
-    ctx.strokeStyle = PALETTE[14];
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.ellipse(LOGIC_WIDTH / 2, 130, 96, 38, 0, 0, Math.PI * 2);
-    ctx.stroke();
-
-    drawDitherRect(ctx, 36, 95, LOGIC_WIDTH - 72, 68, PALETTE[1], PALETTE[0], 0.25);
-  }
-
-  if (fortifications && fortifications.length > 0) {
-    drawFortifications(ctx, fortifications, animTimer);
-  }
-}
-
-function drawRomanCivilianCourier(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  animTimer: number,
-  flipX: boolean,
-) {
-  ctx.save();
-  ctx.translate(Math.round(x), Math.round(y));
-  if (flipX) ctx.scale(-1, 1);
-
-  // Ground shadow
-  drawDitherShadow(ctx, 0, 1, 6, 2, PALETTE[5]);
-
-  const walkStride = Math.round(Math.sin(animTimer * 14) * 2);
-
-  // Brown leather sandals & bare calves
-  ctx.fillStyle = PALETTE[1]; // flesh
-  ctx.fillRect(-2 - walkStride, -6, 2, 4);
-  ctx.fillRect(1 + walkStride, -6, 2, 4);
-  ctx.fillStyle = PALETTE[14]; // leather sandals
-  ctx.fillRect(-3 - walkStride, -2, 3, 2);
-  ctx.fillRect(0 + walkStride, -2, 3, 2);
-
-  // Roman Civilian Toga/Tunic Body (#ded095 pale parchment with #ba7654 terracotta drape)
-  ctx.fillStyle = '#ded095'; // civilian tunic body
-  ctx.fillRect(-4, -18, 8, 12);
-
-  // Terracotta drape / sash across shoulder & chest (#ba7654)
-  ctx.fillStyle = '#ba7654';
-  ctx.fillRect(-4, -17, 3, 11);
-  ctx.fillRect(-2, -14, 5, 3);
-  ctx.fillRect(1, -11, 3, 4);
-  // Gold fringe hem at base of toga
-  ctx.fillStyle = '#ded095';
-  ctx.fillRect(-4, -7, 8, 1);
-
-  // Messenger leather pouch slung across body
-  ctx.fillStyle = PALETTE[14];
-  ctx.fillRect(2, -12, 3, 4);
-  ctx.fillStyle = PALETTE[5];
-  ctx.fillRect(2, -10, 3, 1);
-
-  // Arms: Right hand carrying imperial decree scroll with crimson wax seal
-  ctx.fillStyle = PALETTE[1]; // arm
-  ctx.fillRect(3, -15, 3, 5);
-  ctx.fillStyle = '#ded095'; // parchment scroll
-  ctx.fillRect(5, -16, 5, 2);
-  ctx.fillStyle = '#9e4a42'; // red wax seal
-  ctx.fillRect(7, -17, 2, 4);
-
-  // Head and Roman civilian haircut
-  ctx.fillStyle = PALETTE[1]; // face skin
-  ctx.fillRect(-3, -24, 6, 6);
-  ctx.fillStyle = PALETTE[5]; // dark roman curly hair
-  ctx.fillRect(-4, -26, 8, 3);
-  ctx.fillRect(-4, -24, 2, 3);
-  ctx.fillStyle = PALETTE[5]; // eyes & mouth
-  ctx.fillRect(1, -22, 1, 1);
-  ctx.fillRect(0, -20, 2, 1); // shouting mouth
-
-  ctx.restore();
-}
-
-// ============================================================================
-// CULTURAL GRAVES ON CAMP FIELD (ROMAN, CELTIC, BERBER, SCYTHIAN, HUNNIC)
-// ============================================================================
-
-export function drawSaladinHealingAura(
-  ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
-  animTime: number,
-) {
-  const breath = Math.sin(animTime * 2.8);
-  const radius = Math.max(1, 22 + breath * 3);
-  ctx.save();
-  const grad = ctx.createRadialGradient(cx, cy, 2, cx, cy, radius);
-  grad.addColorStop(0, 'rgba(74, 222, 128, 0.42)'); // #4ade80
-  grad.addColorStop(0.35, 'rgba(222, 208, 149, 0.22)'); // #ded095
-  grad.addColorStop(0.7, 'rgba(85, 121, 111, 0.10)'); // #55796f
-  grad.addColorStop(1, 'rgba(74, 222, 128, 0)');
-  ctx.fillStyle = grad;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-function drawCulturalGrave(
-  ctx: CanvasRenderingContext2D,
-  grave: MemorialGrave,
-  isHovered: boolean,
-  animTimer: number,
-) {
-  if (!grave) return;
-  const x = Math.round(grave.x || 0);
-  const y = Math.round(grave.y || 0);
-  const safeAnim = animTimer || 0;
-  const culture = grave.culture || 'roman';
-
-  ctx.save();
-  ctx.translate(x, y);
-
-  // Ground shadow under grave
-  drawDitherShadow(ctx, 0, 1, 9, 3, PALETTE[5]);
-
-  if (isHovered) {
-    // Subtle reverence shadow warmth at base of memorial marker (no flashing box/square overlay)
-    drawDitherShadow(ctx, 0, 1, 11, 4, PALETTE[15]);
-  }
-
-  if (culture === 'roman') {
-    // Roman: Carved stone stele / marble altar pillar inscribed with an eagle or laurel motif
-    // 1. Pedestal base
-    ctx.fillStyle = PALETTE[10]; // weathered stone gray
-    ctx.fillRect(-8, -2, 16, 3);
-    ctx.fillStyle = PALETTE[11]; // warm limestone highlight
-    ctx.fillRect(-7, -2, 14, 1);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(-8, 1, 16, 1);
-
-    // 2. Vertical marble altar pillar / stele
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(-6, -18, 12, 16);
-    ctx.fillStyle = PALETTE[0]; // pale highlight edge
-    ctx.fillRect(-6, -18, 2, 16);
-    ctx.fillStyle = PALETTE[10]; // right shade edge
-    ctx.fillRect(4, -18, 2, 16);
-
-    // 3. Cornice / pediment capital roof
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(-7, -21, 14, 3);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(-6, -21, 12, 1);
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(-4, -23, 8, 2);
-    ctx.fillRect(-2, -24, 4, 1);
-
-    // 4. Inscribed Eagle / Laurel motif in bronze/gold
-    ctx.fillStyle = PALETTE[15]; // bronze / antique gold
-    ctx.fillRect(-4, -15, 8, 2); // eagle wing span
-    ctx.fillRect(-1, -16, 2, 4); // eagle body/head
-    ctx.fillRect(-5, -14, 2, 2); // left wingtip
-    ctx.fillRect(3, -14, 2, 2);  // right wingtip
-    ctx.fillStyle = PALETTE[0];  // golden laurel highlight
-    ctx.fillRect(-1, -12, 2, 2);
-
-    // 5. Inscription lines carved into stone
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(-4, -9, 8, 1);
-    ctx.fillRect(-3, -7, 6, 1);
-    ctx.fillRect(-4, -5, 8, 1);
-
-    // 6. Offering cup at base with eternal ember flame
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(-2, -3, 4, 2);
-    const flameFlicker = Math.floor(animTimer * 10) % 2 === 0;
-    ctx.fillStyle = flameFlicker ? PALETTE[3] : PALETTE[2];
-    ctx.fillRect(-1, -5, 2, 2);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(0, -6, 1, 1);
-  } else if (grave.culture === 'celt') {
-    // Celtic: Moss-covered standing menhir stone / Celtic circular cross carved in rough slate
-    // 1. Slate Menhir monolith body (rough, tapered)
-    ctx.fillStyle = PALETTE[6]; // slate blue-gray
-    ctx.fillRect(-6, -20, 12, 21);
-    ctx.fillRect(-5, -23, 10, 3);
-    ctx.fillRect(-4, -25, 7, 2);
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(-5, -20, 2, 20);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(4, -20, 2, 21);
-
-    // 2. Celtic circular ring cross carved into slate face
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(-1, -19, 2, 14); // vertical shaft
-    ctx.fillRect(-5, -14, 10, 2); // horizontal crossbar
-    ctx.fillRect(-4, -17, 8, 1);  // circular halo top
-    ctx.fillRect(-4, -10, 8, 1);  // circular halo bottom
-    ctx.fillRect(-4, -16, 1, 6);  // left arc
-    ctx.fillRect(3, -16, 1, 6);   // right arc
-    ctx.fillStyle = PALETTE[0];   // center knotwork
-    ctx.fillRect(-1, -14, 2, 2);
-
-    // 3. Moss patches on stone
-    ctx.fillStyle = PALETTE[12]; // mossy olive drab
-    ctx.fillRect(-6, -8, 3, 5);
-    ctx.fillRect(-5, -22, 2, 3);
-    ctx.fillRect(2, -4, 4, 4);
-    ctx.fillStyle = PALETTE[8];  // olive sage highlight
-    ctx.fillRect(-6, -6, 2, 2);
-    ctx.fillRect(3, -3, 2, 2);
-
-    // 4. Wild purple heather flowers at stone base
-    ctx.fillStyle = PALETTE[4]; // wine / heather bloom
-    ctx.fillRect(-8, -2, 2, 2);
-    ctx.fillRect(6, -2, 2, 2);
-    ctx.fillStyle = PALETTE[12];
-    ctx.fillRect(-7, 0, 1, 2);
-    ctx.fillRect(7, 0, 1, 2);
-  } else if (grave.culture === 'berber') {
-    // Berber: Desert stone cairn wrapped with woven prayer cloth and desert stones
-    // 1. Bottom stones layer
-    ctx.fillStyle = PALETTE[14]; // raw umber stone
-    ctx.fillRect(-8, -4, 6, 4);
-    ctx.fillStyle = PALETTE[1];  // sand ochre stone
-    ctx.fillRect(-3, -5, 7, 5);
-    ctx.fillStyle = PALETTE[2];  // terracotta stone
-    ctx.fillRect(3, -4, 6, 4);
-
-    // 2. Middle stone tier
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(-6, -9, 6, 5);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-1, -10, 7, 6);
-
-    // 3. Woven prayer cloth sash wrapped around middle stones
-    ctx.fillStyle = PALETTE[4]; // burgundy woven sash
-    ctx.fillRect(-7, -8, 14, 3);
-    ctx.fillStyle = PALETTE[0]; // pale fringe and border
-    ctx.fillRect(-7, -8, 14, 1);
-    ctx.fillRect(-7, -6, 14, 1);
-    // Hanging woven ribbon tail
-    ctx.fillStyle = PALETTE[4];
-    ctx.fillRect(-5, -5, 2, 5);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(-5, 0, 2, 1);
-
-    // 4. Upper tier and desert capstone
-    ctx.fillStyle = PALETTE[2];
-    ctx.fillRect(-4, -14, 8, 5);
-    ctx.fillStyle = PALETTE[1]; // sand ochre capstone
-    ctx.fillRect(-3, -18, 6, 4);
-    ctx.fillStyle = PALETTE[15]; // bronze sun glint
-    ctx.fillRect(-2, -18, 4, 1);
-
-    // 5. Desert pebble ring at base
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(-10, 0, 2, 1);
-    ctx.fillRect(9, 0, 2, 1);
-    ctx.fillRect(-6, 1, 2, 1);
-    ctx.fillRect(5, 1, 2, 1);
-  } else if (grave.culture === 'scythian') {
-    // Scythian: Kurgan burial mound marker topped with a bronze spear/arrow totem
-    // 1. Kurgan earthen burial mound
-    ctx.fillStyle = PALETTE[14]; // raw umber earth
-    ctx.fillRect(-10, -5, 20, 6);
-    ctx.fillStyle = PALETTE[12]; // mossy olive turf
-    ctx.fillRect(-9, -7, 18, 4);
-    ctx.fillRect(-7, -9, 14, 3);
-    ctx.fillRect(-4, -10, 8, 2);
-    ctx.fillStyle = PALETTE[8];  // sage grass highlight
-    ctx.fillRect(-8, -7, 5, 2);
-    ctx.fillRect(2, -7, 5, 2);
-
-    // 2. Upright bronze spear / totem pole planted deep in mound
-    ctx.fillStyle = PALETTE[14]; // dark wood pole
-    ctx.fillRect(-1, -22, 2, 15);
-
-    // 3. Bronze spearhead pointing upwards
-    ctx.fillStyle = PALETTE[15]; // antique bronze
-    ctx.fillRect(-2, -26, 4, 4);
-    ctx.fillRect(-1, -29, 2, 3);
-    ctx.fillStyle = PALETTE[0];  // glittering spearhead tip
-    ctx.fillRect(0, -30, 1, 2);
-
-    // 4. Crossbar arrow fletching / totem wings
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(-6, -24, 12, 1);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(-6, -26, 2, 3);
-    ctx.fillRect(4, -26, 2, 3);
-
-    // 5. Crimson prayer ribbon tied below spearhead fluttering in wind
-    ctx.fillStyle = PALETTE[3];
-    const ribbonWave = Math.floor(animTimer * 6) % 2 === 0 ? 1 : 0;
-    ctx.fillRect(1, -22, 4 + ribbonWave, 2);
-    ctx.fillRect(3 + ribbonWave, -20, 2, 2);
-  } else {
-    // Hunnic: Timber post notched with horse-tail horsehair crest and iron battle studs
-    // 1. Heavy dark timber post
-    ctx.fillStyle = PALETTE[5];  // charred dark iron
-    ctx.fillRect(-4, -22, 8, 23);
-    ctx.fillStyle = PALETTE[14]; // raw umber wood grain
-    ctx.fillRect(-3, -22, 3, 22);
-
-    // 2. Notched tribal cuts in wood
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(-3, -16, 5, 1);
-    ctx.fillRect(-2, -12, 4, 1);
-    ctx.fillRect(-3, -8, 5, 1);
-
-    // 3. Iron battle studs driven into post
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(-2, -19, 2, 2);
-    ctx.fillRect(1, -15, 2, 2);
-    ctx.fillRect(-2, -10, 2, 2);
-    ctx.fillRect(1, -6, 2, 2);
-
-    // 4. Iron collar ring at top of post
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(-5, -23, 10, 2);
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(-4, -24, 8, 1);
-
-    // 5. Horsehair crest / horse-tail hanging from the timber post
-    const tailSway = Math.floor(animTimer * 5) % 2 === 0 ? 1 : 0;
-    ctx.fillStyle = PALETTE[0]; // pale horsehair
-    ctx.fillRect(4, -22, 3, 10);
-    ctx.fillRect(4 + tailSway, -12, 3, 8);
-    ctx.fillStyle = PALETTE[9]; // dark charcoal strands
-    ctx.fillRect(5, -21, 1, 9);
-    ctx.fillRect(5 + tailSway, -11, 1, 7);
-  }
-
-  // Memorial graves in camp remain clean with eternal embers/offerings (no flies in camp)
-  ctx.restore();
-}
 
 // ============================================================================
 // TRAVELING NOMAD MERCHANT SYSTEM & CARAVAN BAZAAR WARES
@@ -8126,20 +794,6 @@ function drawCulturalGrave(
 // Walks in, unfolds a patterned Persian carpet with exotic wares, sits for ~15s,
 // speaks ambient dialogue, and departs if not engaged.
 // ============================================================================
-
-export interface TravelingMerchantState {
-  active: boolean;
-  state: 'entering' | 'sitting' | 'leaving';
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  sitTimer: number; // starts at 15s
-  hasPlayedSitSpeech: boolean;
-  hasPlayedDepartSpeech: boolean;
-  flipX: boolean;
-  animTimer: number;
-}
 
 export const INITIAL_MERCHANT_STATE: TravelingMerchantState = {
   active: false,
@@ -8154,657 +808,6 @@ export const INITIAL_MERCHANT_STATE: TravelingMerchantState = {
   flipX: false,
   animTimer: 0,
 };
-
-function drawTravelingMerchant(
-  ctx: CanvasRenderingContext2D,
-  merchant: TravelingMerchantState,
-  isHovered: boolean,
-  animTimer: number,
-) {
-  if (!merchant.active) return;
-  const mx = Math.round(merchant.x);
-  const my = Math.round(merchant.y);
-
-  ctx.save();
-  ctx.translate(mx, my);
-
-  if (merchant.state === 'sitting') {
-    // 1. CARPET / RUG LAID OUT BENEATH SITTING MERCHANT
-    const cw = 36;
-    const ch = 14;
-    const cx = -Math.floor(cw / 2);
-    const cy = -4;
-
-    // Carpet ground shadow
-    drawDitherShadow(ctx, 0, cy + ch / 2 + 1, cw / 2 + 3, ch / 2 + 2, PALETTE[5]);
-
-    // Carpet base (Wine / Burgundy)
-    ctx.fillStyle = PALETTE[4];
-    ctx.fillRect(cx, cy, cw, ch);
-
-    // Left and Right Fringes (Pale parchment cream)
-    ctx.fillStyle = PALETTE[0];
-    for (let fy = cy; fy < cy + ch; fy += 2) {
-      ctx.fillRect(cx - 2, fy, 2, 1);
-      ctx.fillRect(cx + cw, fy, 2, 1);
-    }
-
-    // Antique Gold & Sand geometric borders
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(cx + 1, cy + 1, cw - 2, 1);
-    ctx.fillRect(cx + 1, cy + ch - 2, cw - 2, 1);
-    ctx.fillRect(cx + 1, cy + 1, 1, ch - 2);
-    ctx.fillRect(cx + cw - 2, cy + 1, 1, ch - 2);
-
-    // Diamond / tessellated patterned weave inside carpet
-    ctx.fillStyle = PALETTE[1]; // sand ochre
-    for (let dx = cx + 4; dx < cx + cw - 4; dx += 6) {
-      ctx.fillRect(dx + 1, cy + 4, 3, 1);
-      ctx.fillRect(dx, cy + 5, 5, 1);
-      ctx.fillRect(dx + 1, cy + 6, 3, 1);
-      ctx.fillRect(dx + 2, cy + 7, 1, 1);
-    }
-
-    // EXOTIC WARES DISPLAYED ON CARPET:
-    // Left side: Jeweled flasks & obsidian shards
-    ctx.fillStyle = PALETTE[7]; // emerald/verdigris potion vial
-    ctx.fillRect(cx + 3, cy + 3, 3, 4);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(cx + 4, cy + 2, 1, 1);
-
-    ctx.fillStyle = PALETTE[5]; // obsidian kopis razor shard
-    ctx.fillRect(cx + 7, cy + 2, 4, 2);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(cx + 10, cy + 2, 1, 1);
-
-    // Right side: Damascene steel spatha & golden coins
-    ctx.fillStyle = PALETTE[15]; // gold coins pile
-    ctx.fillRect(cx + cw - 7, cy + 6, 4, 3);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(cx + cw - 6, cy + 6, 2, 1);
-
-    ctx.fillStyle = PALETTE[11]; // damascene steel curved blade
-    ctx.fillRect(cx + cw - 12, cy + 3, 5, 2);
-    ctx.fillStyle = PALETTE[15]; // crossguard
-    ctx.fillRect(cx + cw - 8, cy + 2, 1, 4);
-
-    // Glittering wares sparkle animation
-    const sparkPulse = Math.floor(animTimer * 6) % 3;
-    if (sparkPulse === 0) {
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(cx + 8, cy + 2, 1, 1);
-      ctx.fillRect(cx + cw - 10, cy + 3, 1, 1);
-    }
-
-    // 2. SITTING CROSS-LEGGED MERCHANT SPRITE
-    // Seated folded legs
-    ctx.fillStyle = PALETTE[14]; // raw umber folded legs
-    ctx.fillRect(-6, -6, 12, 4);
-    ctx.fillStyle = PALETTE[1]; // desert robe folds
-    ctx.fillRect(-5, -5, 10, 3);
-    ctx.fillStyle = PALETTE[4]; // wine colored sash
-    ctx.fillRect(-3, -4, 6, 2);
-
-    // Seated torso
-    ctx.fillStyle = PALETTE[1]; // ochre nomad tunic
-    ctx.fillRect(-4, -14, 8, 9);
-    ctx.fillStyle = PALETTE[4]; // nomad traveler mantle
-    ctx.fillRect(-5, -14, 2, 8);
-    ctx.fillRect(3, -14, 2, 8);
-    ctx.fillStyle = PALETTE[15]; // bronze merchant medallion
-    ctx.fillRect(-1, -12, 2, 3);
-
-    // Resting arms & hands on lap
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-5, -9, 3, 4);
-    ctx.fillRect(2, -9, 3, 4);
-
-    // Head, Turban & Desert Face Veil
-    ctx.fillStyle = PALETTE[0]; // pale linen desert turban
-    ctx.fillRect(-4, -20, 8, 6);
-    ctx.fillStyle = PALETTE[15]; // bronze turban jewel clasp
-    ctx.fillRect(-1, -19, 2, 2);
-    ctx.fillStyle = PALETTE[1]; // face skin
-    ctx.fillRect(-3, -16, 6, 3);
-    ctx.fillStyle = PALETTE[5]; // dark beard and eyes
-    ctx.fillRect(-2, -16, 1, 1);
-    ctx.fillRect(1, -16, 1, 1);
-    ctx.fillRect(-3, -14, 6, 2);
-
-    // Hover Highlight corner brackets (No flashing box)
-    if (isHovered) {
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(cx - 3, cy - 2, 3, 2);
-      ctx.fillRect(cx - 3, cy - 2, 2, 3);
-      ctx.fillRect(cx + cw, cy - 2, 3, 2);
-      ctx.fillRect(cx + cw + 1, cy - 2, 2, 3);
-      ctx.fillRect(cx - 3, cy + ch, 3, 2);
-      ctx.fillRect(cx - 3, cy + ch - 1, 2, 3);
-      ctx.fillRect(cx + cw, cy + ch, 3, 2);
-      ctx.fillRect(cx + cw + 1, cy + ch - 1, 2, 3);
-    }
-  } else {
-    // WALKING NOMAD MERCHANT (Entering or Leaving)
-    if (merchant.flipX) {
-      ctx.scale(-1, 1);
-    }
-
-    // Foot shadow
-    drawDitherShadow(ctx, 0, 1, 7, 2, PALETTE[5]);
-
-    const walkStride = Math.round(Math.sin(animTimer * 10) * 2);
-
-    // Boots
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(-2 - walkStride, -6, 2, 6);
-    ctx.fillRect(1 + walkStride, -6, 2, 6);
-
-    // Long robes
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-4, -18, 8, 12);
-    ctx.fillStyle = PALETTE[4]; // wine mantle
-    ctx.fillRect(-5, -18, 3, 10);
-    ctx.fillRect(2, -18, 3, 10);
-
-    // Traveling pack on back
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(-7, -19, 3, 9);
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(-7, -17, 3, 2);
-
-    // Walking staff with lantern in right hand
-    ctx.fillStyle = PALETTE[14];
-    ctx.fillRect(4, -24, 1, 24);
-    ctx.fillStyle = PALETTE[15]; // brass lantern top
-    ctx.fillRect(3, -26, 3, 3);
-    ctx.fillStyle = PALETTE[0]; // glowing lantern ember
-    ctx.fillRect(4, -25, 1, 2);
-
-    // Head & turban
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(-3, -24, 6, 6);
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(0, -23, 2, 2);
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(-2, -20, 5, 3);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(1, -20, 1, 1);
-  }
-
-  ctx.restore();
-}
-
-// ============================================================================
-// FIVE-TIER COLISEUM PODIUM & MONUMENTAL STAIRCASE SCREEN
-// Visually rendered in five distinct elevation stages, adorned with curly Roman
-// laurel/ivy vines, sculpted pedestals, and torches, rendered strictly using the
-// 16-color antiquity palette and 4x pixel scaling.
-// ============================================================================
-
-function drawRomanPodiumScreen(
-  ctx: CanvasRenderingContext2D,
-  unlockedTierIndex: number,
-  animTimer: number,
-  winningGlads: Gladiator[],
-  newlyWonTier: number,
-  podiumTimer: number,
-  flashTimer: number,
-) {
-  const safeTierIdx = Math.max(0, unlockedTierIndex || 0);
-  const safeAnim = animTimer || 0;
-  const safePodiumTimer = Math.max(0, podiumTimer || 0);
-  const safeFlashTimer = Math.max(0, flashTimer || 0);
-
-  // Clear canvas with dark twilight roman arena vault
-  ctx.fillStyle = PALETTE[5];
-  ctx.fillRect(0, 0, LOGIC_WIDTH, LOGIC_HEIGHT);
-
-  // Upper sky glow through arches
-  ctx.fillStyle = PALETTE[4]; // wine / burgundy twilight
-  ctx.fillRect(0, 0, LOGIC_WIDTH, 44);
-  drawDitherRect(ctx, 0, 36, LOGIC_WIDTH, 14, PALETTE[4], PALETTE[3], 0.5);
-
-  // Monumental Colosseum Arches in background
-  for (let ax = 20; ax < LOGIC_WIDTH - 20; ax += 60) {
-    ctx.fillStyle = PALETTE[9];
-    ctx.fillRect(ax, 12, 42, 48);
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(ax + 4, 18, 34, 42);
-
-    // Hanging imperial crimson banners
-    ctx.fillStyle = PALETTE[3];
-    ctx.fillRect(ax + 14, 20, 14, 28);
-    ctx.fillStyle = PALETTE[15]; // gold eagle crest on banner
-    ctx.fillRect(ax + 18, 26, 6, 6);
-  }
-
-  // Grand Colonnade archway cornice
-  ctx.fillStyle = PALETTE[10];
-  ctx.fillRect(0, 48, LOGIC_WIDTH, 6);
-  ctx.fillStyle = PALETTE[11];
-  ctx.fillRect(0, 48, LOGIC_WIDTH, 2);
-
-  // Pale alabaster floor base
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(0, 168, LOGIC_WIDTH, 24);
-  ctx.fillStyle = PALETTE[1];
-  for (let fx = 0; fx < LOGIC_WIDTH; fx += 24) {
-    ctx.fillRect(fx, 168, 1, 24);
-  }
-
-  // 5-STAGE MONUMENTAL ROMAN PODIUM STAIRCASE
-  const stages = [
-    { idx: 0, y: 154, h: 16, w: 260, x: 42, label: 'I' },
-    { idx: 1, y: 132, h: 16, w: 210, x: 67, label: 'II' },
-    { idx: 2, y: 110, h: 16, w: 160, x: 92, label: 'III' },
-    { idx: 3, y: 88,  h: 16, w: 110, x: 117, label: 'IV' },
-    { idx: 4, y: 62,  h: 18, w: 70,  x: 137, label: 'V' },
-  ];
-
-  stages.forEach((st) => {
-    const isCompleted = safeTierIdx > st.idx;
-    const isCurrent = safeTierIdx === st.idx;
-    const isLocked = safeTierIdx < st.idx;
-
-    const baseColor = isLocked ? PALETTE[9] : PALETTE[10];
-    const treadColor = isLocked ? PALETTE[5] : isCurrent ? PALETTE[0] : PALETTE[11];
-
-    // Riser face
-    ctx.fillStyle = baseColor;
-    ctx.fillRect(st.x, st.y, st.w, st.h);
-
-    // Tread surface
-    ctx.fillStyle = treadColor;
-    ctx.fillRect(st.x - 2, st.y, st.w + 4, 3);
-    ctx.fillStyle = isCurrent ? PALETTE[15] : PALETTE[0];
-    ctx.fillRect(st.x - 2, st.y, st.w + 4, 1);
-
-    // Riser bottom shadow
-    ctx.fillStyle = PALETTE[5];
-    ctx.fillRect(st.x, st.y + st.h - 1, st.w, 1);
-
-    // Left and right balustrade pillars
-    ctx.fillStyle = PALETTE[11];
-    ctx.fillRect(st.x - 5, st.y - 4, 4, st.h + 4);
-    ctx.fillRect(st.x + st.w + 1, st.y - 4, 4, st.h + 4);
-    ctx.fillStyle = PALETTE[15]; // gold finial
-    ctx.fillRect(st.x - 5, st.y - 6, 4, 2);
-    ctx.fillRect(st.x + st.w + 1, st.y - 6, 4, 2);
-
-    // Curly Roman Laurel & Ivy Vines clinging to balustrades & risers
-    ctx.fillStyle = PALETTE[12]; // mossy olive stem
-    ctx.fillRect(st.x - 4, st.y - 2, 2, st.h + 2);
-    ctx.fillRect(st.x + st.w + 2, st.y - 2, 2, st.h + 2);
-    ctx.fillStyle = PALETTE[8];  // olive sage leaves
-    ctx.fillRect(st.x - 6, st.y + 2, 2, 2);
-    ctx.fillRect(st.x - 2, st.y + 6, 2, 2);
-    ctx.fillRect(st.x + st.w, st.y + 4, 2, 2);
-    ctx.fillRect(st.x + st.w + 4, st.y + 8, 2, 2);
-    ctx.fillStyle = PALETTE[13]; // golden olive leaves
-    ctx.fillRect(st.x + 8, st.y + 2, 3, 2);
-    ctx.fillRect(st.x + st.w - 11, st.y + 2, 3, 2);
-
-    // Center Stage Medallion / Laurel Crest
-    const cx = Math.round(st.x + st.w / 2);
-    if (isCompleted) {
-      // Golden Laurel Wreath medallion carved on riser
-      ctx.fillStyle = PALETTE[15]; // bronze / antique gold
-      ctx.fillRect(cx - 8, st.y + 4, 16, 8);
-      ctx.fillStyle = PALETTE[10];
-      ctx.fillRect(cx - 5, st.y + 6, 10, 4);
-      ctx.fillStyle = PALETTE[0]; // gleaming laurel ribbon
-      ctx.fillRect(cx - 2, st.y + 11, 4, 2);
-    } else if (isCurrent) {
-      // Current trial: Glowing radiant laurel wreath with pulsing embers
-      const pulse = Math.floor(safeAnim * 8) % 2 === 0;
-      ctx.fillStyle = pulse ? PALETTE[0] : PALETTE[15];
-      ctx.fillRect(cx - 10, st.y + 3, 20, 10);
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(cx - 6, st.y + 5, 12, 6);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(cx - 2, st.y + 7, 4, 2);
-    } else {
-      // Locked: Iron lock / chain motif
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillRect(cx - 5, st.y + 5, 10, 6);
-      ctx.fillStyle = PALETTE[11];
-      ctx.fillRect(cx - 2, st.y + 7, 4, 2);
-    }
-
-    // CEREMONIAL PEDESTAL BRAZIERS ON LEFT AND RIGHT BALUSTRADES OF EACH TIER
-    const isWon = st.idx < safeTierIdx;
-    const isNewlyWon = st.idx === newlyWonTier;
-    const isLit = isWon && (!isNewlyWon || safePodiumTimer >= 0.25);
-
-    const bxLeft = st.x - 3;
-    const bxRight = st.x + st.w + 1;
-    const byTier = st.y - 7;
-
-    [bxLeft, bxRight].forEach((bx) => {
-      // Pedestal stand
-      ctx.fillStyle = PALETTE[14]; // raw umber wood/stone base
-      ctx.fillRect(bx - 1, byTier + 3, 4, 5);
-      // Bronze bowl
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(bx - 3, byTier + 1, 8, 3);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillRect(bx - 2, byTier + 1, 6, 1);
-
-      if (isLit) {
-        // Blazing pixel flames!
-        const flameStep = (Math.floor(safeAnim * 14) + st.idx * 3 + (bx === bxLeft ? 0 : 2)) % 4;
-        ctx.fillStyle = PALETTE[3]; // deep crimson
-        ctx.fillRect(bx - 2, byTier - 3, 6, 4);
-        ctx.fillStyle = PALETTE[2]; // terracotta
-        ctx.fillRect(bx - 2, byTier - 5, 5, 3);
-        ctx.fillStyle = PALETTE[1]; // sand ochre
-        ctx.fillRect(bx - 1, byTier - 6, 4, 3);
-        ctx.fillStyle = PALETTE[0]; // white-hot flame core
-        ctx.fillRect(bx, byTier - 5, 2, 3);
-
-        const tipX = flameStep === 1 ? -1 : flameStep === 2 ? 1 : 0;
-        ctx.fillStyle = flameStep % 2 === 0 ? PALETTE[0] : PALETTE[15];
-        ctx.fillRect(bx + tipX, byTier - 8 - (flameStep === 0 ? 1 : 0), 2, 3);
-      } else {
-        // Cold unlit charcoal embers in bowl
-        ctx.fillStyle = PALETTE[5];
-        ctx.fillRect(bx - 2, byTier, 6, 2);
-        ctx.fillStyle = PALETTE[9];
-        ctx.fillRect(bx - 1, byTier - 1, 4, 1);
-      }
-    });
-  });
-
-  // FIRE IGNITION FLASH EFFECT OVER THE NEWLY LIT TIER
-  if (safeFlashTimer > 0 && newlyWonTier >= 0 && newlyWonTier < stages.length) {
-    const targetStage = stages[newlyWonTier];
-    const flashProgress = safeFlashTimer / 0.45; // 1 down to 0
-    const flashR = Math.round(18 + (1 - flashProgress) * 32);
-
-    ctx.save();
-    // Expanding fiery radiance around the tier
-    drawDitherShadow(ctx, targetStage.x + targetStage.w / 2, targetStage.y + 4, flashR * 1.6, flashR * 0.9, PALETTE[0]);
-    drawDitherShadow(ctx, targetStage.x - 3, targetStage.y - 7, flashR * 0.8, flashR * 0.8, PALETTE[15]);
-    drawDitherShadow(ctx, targetStage.x + targetStage.w + 1, targetStage.y - 7, flashR * 0.8, flashR * 0.8, PALETTE[15]);
-
-    // Full-screen golden ceremonial fire flash
-    ctx.fillStyle = PALETTE[0];
-    ctx.globalAlpha = Math.min(0.35, flashProgress * 0.5);
-    ctx.fillRect(0, 0, LOGIC_WIDTH, LOGIC_HEIGHT);
-    ctx.restore();
-  }
-
-  // APEX STAGE 5 TRIUMPHAL STATUE / TROPHY
-  const apexX = 172;
-  const apexY = 58;
-  if (safeTierIdx >= 5) {
-    // Grand Coliseum Champion Title Crown: Golden Imperial Eagle standard
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(apexX - 8, apexY - 22, 16, 8);
-    ctx.fillRect(apexX - 3, apexY - 26, 6, 6);
-    ctx.fillRect(apexX - 1, apexY - 14, 2, 14);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(apexX - 6, apexY - 20, 12, 2);
-    ctx.fillStyle = PALETTE[13];
-    ctx.fillRect(apexX - 10, apexY - 10, 20, 4);
-
-    // Apex eternal flame braziers
-    [-18, 18].forEach((offset) => {
-      ctx.fillStyle = PALETTE[15];
-      ctx.fillRect(apexX + offset - 3, apexY - 14, 6, 4);
-      const fs = Math.floor(safeAnim * 12) % 3;
-      ctx.fillStyle = PALETTE[3];
-      ctx.fillRect(apexX + offset - 2, apexY - 17, 4, 3);
-      ctx.fillStyle = fs === 0 ? PALETTE[0] : PALETTE[15];
-      ctx.fillRect(apexX + offset - 1, apexY - 20, 2, 3);
-    });
-  } else {
-    // Gilded Laurel Trophy awaiting the Champion
-    ctx.fillStyle = PALETTE[15];
-    ctx.fillRect(apexX - 6, apexY - 14, 12, 12);
-    ctx.fillStyle = PALETTE[10];
-    ctx.fillRect(apexX - 3, apexY - 11, 6, 6);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillRect(apexX - 1, apexY - 16, 2, 3);
-  }
-
-  // WINNING GLADIATORS AT THE BASE OF THE PEDESTAL
-  const glads = Array.isArray(winningGlads) ? winningGlads.filter(Boolean) : [];
-  const numGlads = glads.length;
-  glads.forEach((glad, i) => {
-    if (!glad) return;
-    let gx = 172;
-    if (numGlads === 1) {
-      gx = 172;
-    } else if (numGlads === 2) {
-      gx = 138 + i * 68;
-    } else if (numGlads === 3) {
-      gx = 112 + i * 60;
-    } else {
-      gx = 78 + i * (188 / Math.max(1, numGlads - 1));
-    }
-    const gy = 177;
-    const isFallen = (glad.hp || 0) <= 0;
-    const gladFirstName = (glad.name || 'Champion').split(' ')[0].toUpperCase();
-
-    if (isFallen) {
-      // Fallen squad member in prone/fallen "body" sprite format at the base of the monument
-      drawCulturalGladiator(
-        ctx,
-        gx,
-        gy + 2,
-        glad.culture || 'roman',
-        'death',
-        i % 2 === 1,
-        safeAnim,
-        0,
-        0,
-        0,
-        glad.level || 1,
-        glad.equipped,
-        glad.isCavalry,
-        glad.isElephant,
-        false,
-        0,
-        false,
-        glad.heroType,
-        undefined,
-        true,
-      );
-
-      // Name tag with (FALLEN)
-      ctx.font = "bold 6px 'Cinzel', Georgia, serif";
-      ctx.textAlign = 'center';
-      ctx.fillStyle = PALETTE[3]; // crimson
-      ctx.fillText(`${gladFirstName} (FALLEN)`, gx, gy + 10);
-    } else {
-      // Surviving gladiator standing upright
-      drawCulturalGladiator(
-        ctx,
-        gx,
-        gy,
-        glad.culture || 'roman',
-        'idle',
-        i % 2 === 1,
-        safeAnim + i * 0.4,
-        0,
-        0,
-        0,
-        glad.level || 1,
-        glad.equipped,
-        glad.isCavalry,
-        glad.isElephant,
-        false,
-        0,
-        false,
-        glad.heroType,
-        undefined,
-        false,
-      );
-
-      // Victor's Golden Laurel Wreath above head (SURVIVORS ONLY)
-      const wreathY = gy - 33;
-      ctx.fillStyle = PALETTE[15]; // antique gold
-      ctx.fillRect(gx - 5, wreathY, 10, 3);
-      ctx.fillRect(gx - 6, wreathY - 2, 3, 3);
-      ctx.fillRect(gx + 3, wreathY - 2, 3, 3);
-      ctx.fillStyle = PALETTE[0]; // gleaming leaf tips
-      ctx.fillRect(gx - 1, wreathY + 1, 2, 2);
-      ctx.fillRect(gx - 4, wreathY - 1, 2, 1);
-      ctx.fillRect(gx + 2, wreathY - 1, 2, 1);
-
-      // Gladiator Name Tag on courtyard floor
-      ctx.font = "bold 6px 'Cinzel', Georgia, serif";
-      ctx.textAlign = 'center';
-      ctx.fillStyle = PALETTE[5];
-      ctx.fillText(gladFirstName, gx + 1, gy + 11);
-      ctx.fillStyle = PALETTE[0];
-      ctx.fillText(gladFirstName, gx, gy + 10);
-    }
-  });
-}
-
-// ============================================================================
-// TUTORIAL ENGINE TYPES, STRINGS & MANAGER DIALOGUE RENDERER
-// ============================================================================
-
-export type TutorialStage =
-  | 'idle'
-  | 'wine_speech'
-  | 'spotlight_tent'
-  | 'spotlight_armory'
-  | 'call_warning'
-  | 'done';
-
-export type PostBattleTutorialStage =
-  | 'none'
-  | 'recruits_dialogue_1'
-  | 'recruits_dialogue_2'
-  | 'courtyard_zoom'
-  | 'dummy_spotlight_1'
-  | 'dummy_spotlight_2'
-  | 'tent_spotlight'
-  | 'done';
-
-export const TUTORIAL_TEXT_TENT =
-  'This is your camp... click this to find and upgrade your gladiators.';
-export const TUTORIAL_TEXT_ARMORY =
-  'This is your armory... click this to buy and attach new weapons.';
-export const TUTORIAL_TEXT_WARNING =
-  'No one knows when the emperor demands more blood, so stand ready: you will soon be called to supply your gladiators to the arena.';
-
-export const POST_BATTLE_TEXT_1 =
-  'Be quick! You have the gold to buy new recruits!';
-export const POST_BATTLE_TEXT_2 =
-  'Your time perusing will never speed up your next wait... but by waiting in camp, your men will heal.';
-export const DUMMY_TEXT_1 =
-  "You can take on smaller skirmishes while you wait to be summoned. But be careful: you trade your own men's blood for gold.";
-export const DUMMY_TEXT_2 =
-  'Rome... always hungers.';
-export const POST_BATTLE_TENT_TEXT =
-  'And make sure to buy more men first!';
-
-function drawManagerTutorialBox(
-  ctx: CanvasRenderingContext2D,
-  title: string,
-  text: string,
-  charCount: number,
-  isLineDone: boolean,
-  elapsed: number,
-) {
-  if (!text) return;
-  const safeCharCount = Math.max(0, Math.min(text.length, charCount || 0));
-  const safeElapsed = Math.max(0, elapsed || 0);
-
-  const boxX = 14;
-  const boxW = LOGIC_WIDTH - 28;
-  const boxH = 58;
-  const currentBoxY = LOGIC_HEIGHT - boxH - 8;
-
-  // Box Drop Shadow
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
-  ctx.fillRect(boxX - 2, currentBoxY - 2, boxW + 4, boxH + 4);
-
-  // Outer Stone Frame (#8C7A6B weathered stone beveled border)
-  ctx.fillStyle = '#8C7A6B';
-  ctx.fillRect(boxX, currentBoxY, boxW, boxH);
-
-  // Inner Dark Antiquity Panel (#2A1B19)
-  ctx.fillStyle = '#2A1B19';
-  ctx.fillRect(boxX + 3, currentBoxY + 3, boxW - 6, boxH - 6);
-
-  // Dual Fillet Trim Borders
-  ctx.strokeStyle = '#3f363b';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(boxX + 2.5, currentBoxY + 2.5, boxW - 5, boxH - 5);
-  ctx.strokeStyle = PALETTE[15];
-  ctx.strokeRect(boxX + 4.5, currentBoxY + 4.5, boxW - 9, boxH - 9);
-
-  // Corner Studs
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillRect(boxX + 5, currentBoxY + 5, 2, 2);
-  ctx.fillRect(boxX + boxW - 7, currentBoxY + 5, 2, 2);
-  ctx.fillRect(boxX + 5, currentBoxY + boxH - 7, 2, 2);
-  ctx.fillRect(boxX + boxW - 7, currentBoxY + boxH - 7, 2, 2);
-
-  // 16-bit Manager Portrait in Left Corner
-  drawManagerVnPortrait(ctx, boxX + 7, currentBoxY + 8);
-
-  const textX = boxX + 50;
-  const maxW = boxW - 58;
-
-  // Speaker Ribbon: Red highlight extends cleanly across to match the margin end of the smaller pixelated text
-  ctx.fillStyle = PALETTE[3];
-  ctx.fillRect(boxX + 50, currentBoxY + 8, maxW, 11);
-  ctx.fillStyle = PALETTE[15];
-  ctx.fillRect(boxX + 50, currentBoxY + 18, maxW, 1);
-
-  ctx.font = "bold 8px 'Cinzel', Georgia, serif";
-  ctx.textAlign = 'left';
-  ctx.fillStyle = PALETTE[0];
-  ctx.fillText(title || 'LANISTA AULUS', boxX + 54, currentBoxY + 16);
-
-  // Typewriter Text
-  const visible = text.slice(0, safeCharCount);
-  ctx.font = "italic 9px Georgia, 'Cinzel', serif";
-  const words = visible.split(' ');
-  const lines: string[] = [];
-  let curLine = '';
-
-  for (const word of words) {
-    const testLine = curLine ? `${curLine} ${word}` : word;
-    if (ctx.measureText(testLine).width > maxW && curLine) {
-      lines.push(curLine);
-      curLine = word;
-    } else {
-      curLine = testLine;
-    }
-  }
-  if (curLine) lines.push(curLine);
-
-  lines.forEach((line, idx) => {
-    ctx.fillStyle = '#090d16';
-    ctx.fillText(line, textX + 1, currentBoxY + 28 + idx * 11);
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillText(line, textX, currentBoxY + 27 + idx * 11);
-  });
-
-  // Cursor while typing
-  if (!isLineDone && Math.floor(safeElapsed * 12) % 2 === 0) {
-    const lastIdx = lines.length - 1;
-    const lastW = lastIdx >= 0 ? ctx.measureText(lines[lastIdx]).width : 0;
-    ctx.fillStyle = PALETTE[1];
-    ctx.fillRect(textX + lastW + 2, currentBoxY + 20 + Math.max(0, lastIdx) * 11, 3, 7);
-  }
-
-  // Indicator when ready
-  if (isLineDone && Math.sin(safeElapsed * 7) > -0.2) {
-    ctx.font = "bold 8px 'Cinzel', Georgia, serif";
-    ctx.textAlign = 'right';
-    ctx.fillStyle = PALETTE[0];
-    ctx.fillText('▼ PRESS SPACE / A TO ADVANCE', boxX + boxW - 8, currentBoxY + boxH - 5);
-  }
-}
 
 // ============================================================================
 // STYLIZED PIXEL ART POST-BATTLE VICTORY AFTERMATH MODAL
@@ -9257,14 +1260,6 @@ function VictoryAftermathModal({
 // MAIN GAME COMPONENT
 // ============================================================================
 
-const getSafeNow = (): number => {
-  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
-    const p = performance.now();
-    if (typeof p === 'number' && !isNaN(p) && p > 0) return p;
-  }
-  return Date.now();
-};
-
 class GameErrorBoundary extends React.Component<
   {children: React.ReactNode},
   {hasError: boolean; error: Error | null}
@@ -9311,41 +1306,6 @@ class GameErrorBoundary extends React.Component<
   }
 }
 
-export type JudgmentPhase =
-  | 'hold'
-  | 'pan_up'
-  | 'hold_balcony'
-  | 'eye_cut_in'
-  | 'flash'
-  | 'verdict'
-  | 'pan_down'
-  | 'post_pan_hold'
-  | 'execution_walk'
-  | 'execution_strike'
-  | 'execution_settle'
-  | 'done';
-
-export interface JudgmentState {
-  active: boolean;
-  phase: JudgmentPhase;
-  startTime: number;
-  cameraPanY: number;
-  verdict: 'thumbs_up' | 'thumbs_down';
-  isPlayerVictorious: boolean;
-  isTrial: boolean;
-  hasDownedGlads: boolean;
-  downedGladIds: string[];
-  audioTriggered: { build: boolean; cheer: boolean; slash: boolean; murmur: boolean; executionRoar: boolean };
-  executionerId?: string;
-  victimId?: string;
-  execStartX?: number;
-  execStartY?: number;
-  execTargetX?: number;
-  execTargetY?: number;
-  execTimer?: number;
-  execStrikeProgress?: number; // 0 (raise sword) -> 1 (thrust down)
-}
-
 export const INITIAL_JUDGMENT_STATE: JudgmentState = {
   active: false,
   phase: 'hold',
@@ -9360,6 +1320,7 @@ export const INITIAL_JUDGMENT_STATE: JudgmentState = {
 };
 
 // APP_START_LINE
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -9406,9 +1367,9 @@ export default function App() {
 
   const [gameState, setGameState] = useState<GameState>({
     status: 'PLAYING',
-    score: 0,
+    score: SAVE_SCHEMA.score.initial(),
     level: 1,
-    gold: getConfig('startingGold') as number,
+    gold: SAVE_SCHEMA.gold.initial(),
   });
 
   // Camp Shooting Star Rare Engine (500 - 1000s or on death of veteran warrior >= lvl 3)
@@ -9434,23 +1395,19 @@ export default function App() {
   const crowdAudioTimerRef = useRef<number>(2.0);
 
   // Ludus Facility Upgrades, Manager Stamina & Renown
-  const [ludusUpgrades, setLudusUpgrades] = useState<LudusUpgrades>({
-    trainingGrounds: 0,
-    medicalBay: 0,
-    breedingPens: 0,
-  });
+  const [ludusUpgrades, setLudusUpgrades] = useState<LudusUpgrades>(SAVE_SCHEMA.ludusUpgrades.initial());
   const [isUpgradesModalOpen, setIsUpgradesModalOpen] = useState<boolean>(false);
   const [managerStamina, setManagerStamina] = useState<number>(100);
   const managerStaminaRef = useRef<number>(100);
   managerStaminaRef.current = managerStamina;
-  const [managerRenown, setManagerRenown] = useState<number>(0);
-  const [speechcraftLevel, setSpeechcraftLevel] = useState<number>(1);
+  const [managerRenown, setManagerRenown] = useState<number>(SAVE_SCHEMA.managerRenown.initial());
+  const [speechcraftLevel, setSpeechcraftLevel] = useState<number>(SAVE_SCHEMA.speechcraftLevel.initial());
   const [isBreedingModalOpen, setIsBreedingModalOpen] = useState<boolean>(false);
   const [selectedParent1Id, setSelectedParent1Id] = useState<string | null>(null);
   const [selectedParent2Id, setSelectedParent2Id] = useState<string | null>(null);
 
   // Feast Mechanics & Third Pedestal Victory Return States
-  const [isFeastUnlocked, setIsFeastUnlocked] = useState<boolean>(false);
+  const [isFeastUnlocked, setIsFeastUnlocked] = useState<boolean>(SAVE_SCHEMA.isFeastUnlocked.initial());
   const isFeastUnlockedRef = useRef<boolean>(false);
   isFeastUnlockedRef.current = isFeastUnlocked;
   const [feastState, setFeastState] = useState<CampFeastState | null>(null);
@@ -9474,7 +1431,7 @@ export default function App() {
   visitorWalkingNpcRef.current = visitorWalkingNpc;
 
   // Manager Action Bars & Cooldowns
-  const [physicianCost, setPhysicianCost] = useState<number>(50);
+  const [physicianCost, setPhysicianCost] = useState<number>(SAVE_SCHEMA.physicianCost.initial());
   const physicianCostRef = useRef<number>(50);
   physicianCostRef.current = physicianCost;
 
@@ -9507,15 +1464,15 @@ export default function App() {
   } | null>(null);
 
   const [mode, setMode] = useState<'camp' | 'arena' | 'podium'>('camp');
-  const [unlockedTierIndex, setUnlockedTierIndex] = useState<number>(0);
-  const [isColiseumChampion, setIsColiseumChampion] = useState<boolean>(false);
-  const [isEmperorEnraged, setIsEmperorEnraged] = useState<boolean>(false);
+  const [unlockedTierIndex, setUnlockedTierIndex] = useState<number>(SAVE_SCHEMA.unlockedTierIndex.initial());
+  const [isColiseumChampion, setIsColiseumChampion] = useState<boolean>(SAVE_SCHEMA.isColiseumChampion.initial());
+  const [isEmperorEnraged, setIsEmperorEnraged] = useState<boolean>(SAVE_SCHEMA.isEmperorEnraged.initial());
   const isEmperorEnragedRef = useRef<boolean>(false);
   isEmperorEnragedRef.current = isEmperorEnraged;
-  const [isEmperorDefeated, setIsEmperorDefeated] = useState<boolean>(false);
+  const [isEmperorDefeated, setIsEmperorDefeated] = useState<boolean>(SAVE_SCHEMA.isEmperorDefeated.initial());
   const isEmperorDefeatedRef = useRef<boolean>(false);
   isEmperorDefeatedRef.current = isEmperorDefeated;
-  const [isRevoltUnlocked, setIsRevoltUnlocked] = useState<boolean>(false);
+  const [isRevoltUnlocked, setIsRevoltUnlocked] = useState<boolean>(SAVE_SCHEMA.isRevoltUnlocked.initial());
   const isRevoltUnlockedRef = useRef<boolean>(false);
   isRevoltUnlockedRef.current = isRevoltUnlocked;
   const [isEmperorDuel, setIsEmperorDuel] = useState<boolean>(false);
@@ -9544,11 +1501,11 @@ export default function App() {
   const pendingPostFifthDialogueRef = useRef<boolean>(false);
 
   // Overall Campaign Chronicles Statistics
-  const [totalRecruited, setTotalRecruited] = useState<number>(1);
+  const [totalRecruited, setTotalRecruited] = useState<number>(SAVE_SCHEMA.totalRecruited.initial());
   const totalRecruitedRef = useRef<number>(1);
   totalRecruitedRef.current = totalRecruited;
 
-  const [totalBattlesWon, setTotalBattlesWon] = useState<number>(0);
+  const [totalBattlesWon, setTotalBattlesWon] = useState<number>(SAVE_SCHEMA.totalBattlesWon.initial());
   const totalBattlesWonRef = useRef<number>(0);
   totalBattlesWonRef.current = totalBattlesWon;
   const [podiumGladiators, setPodiumGladiators] = useState<Gladiator[]>([]);
@@ -9562,7 +1519,7 @@ export default function App() {
   const [judgmentState, setJudgmentState] = useState<JudgmentState>(INITIAL_JUDGMENT_STATE);
   const judgmentStateRef = useRef<JudgmentState>(INITIAL_JUDGMENT_STATE);
   judgmentStateRef.current = judgmentState;
-  const [memorialGraves, setMemorialGraves] = useState<MemorialGrave[]>(INITIAL_MEMORIAL_GRAVES);
+  const [memorialGraves, setMemorialGraves] = useState<MemorialGrave[]>(SAVE_SCHEMA.memorialGraves.initial());
   const [hoveredGraveId, setHoveredGraveId] = useState<string | null>(null);
   const [selectedGraveId, setSelectedGraveId] = useState<string | null>(null);
 
@@ -9581,12 +1538,12 @@ export default function App() {
 
   // Camp Day/Night and Weather State
   const campTimeOfDayRef = useRef<number>(35); // 0 to 120s
-  const [campWeather, setCampWeather] = useState<'clear' | 'rain'>('clear');
+  const [campWeather, setCampWeather] = useState<'clear' | 'rain'>(SAVE_SCHEMA.weather.initial());
   const campWeatherRef = useRef<'clear' | 'rain'>('clear');
   campWeatherRef.current = campWeather;
 
   // Day / Date Counter & Autosave Persistence Engine
-  const [dayCounter, setDayCounter] = useState<number>(1);
+  const [dayCounter, setDayCounter] = useState<number>(SAVE_SCHEMA.day.initial());
   const dayCounterRef = useRef<number>(1);
   dayCounterRef.current = dayCounter;
 
@@ -9596,7 +1553,7 @@ export default function App() {
   const autosaveTimeoutRef = useRef<any>(null);
   const [hasExistingSave, setHasExistingSave] = useState<boolean>(() => {
     try {
-      return typeof localStorage !== 'undefined' && !!localStorage.getItem('gladiator_manager_save');
+      return typeof localStorage !== 'undefined' && !!localStorage.getItem(SAVE_KEY);
     } catch (_) {
       return false;
     }
@@ -9636,7 +1593,7 @@ export default function App() {
   const [isDebugMenuOpen, setIsDebugMenuOpen] = useState(false);
   const [debugSpawnLevel, setDebugSpawnLevel] = useState<number>(1);
 
-  const [firstBattleDone, setFirstBattleDone] = useState<boolean>(false);
+  const [firstBattleDone, setFirstBattleDone] = useState<boolean>(SAVE_SCHEMA.firstBattleDone.initial());
   const firstBattleDoneRef = useRef<boolean>(false);
   firstBattleDoneRef.current = firstBattleDone;
 
@@ -9683,7 +1640,7 @@ export default function App() {
   );
   const [isArmoryModalOpen, setIsArmoryModalOpen] = useState(false);
   const [armoryTab, setArmoryTab] = useState<'armoria' | 'inventory' | 'bazaar'>('armoria');
-  const [playerInventory, setPlayerInventory] = useState<string[]>([]);
+  const [playerInventory, setPlayerInventory] = useState<string[]>(SAVE_SCHEMA.playerInventory.initial());
   const [activeEquipSelector, setActiveEquipSelector] = useState<{
     gladId: string;
     slot: 'RIGHT' | 'LEFT';
@@ -9697,25 +1654,13 @@ export default function App() {
   const [questResolution, setQuestResolution] = useState<QuestResolutionModalState | null>(null);
   const [courierNotice, setCourierNotice] = useState<CourierNoticeState | null>(null);
   const courierTimerRef = useRef<number>(55);
-  const [unlockedChains, setUnlockedChains] = useState<string[]>([
-    'chain_corrupt_senator',
-    'chain_shadow_broker',
-    'chain_priestess_bellona',
-  ]);
+  const [unlockedChains, setUnlockedChains] = useState<string[]>(SAVE_SCHEMA.unlockedChains.initial());
 
   // Unlocked gladiator questline stages for living champions
-  const [unlockedGladiatorQuests, setUnlockedGladiatorQuests] = useState<{
-    gladiatorId: string;
-    chainId: string;
-    nextNodeId: string;
-    stage: number;
-  }[]>([]);
-  const unlockedGladiatorQuestsRef = useRef<{
-    gladiatorId: string;
-    chainId: string;
-    nextNodeId: string;
-    stage: number;
-  }[]>([]);
+  const [unlockedGladiatorQuests, setUnlockedGladiatorQuests] = useState<GladiatorQuestProgress[]>(
+    SAVE_SCHEMA.unlockedGladiatorQuests.initial(),
+  );
+  const unlockedGladiatorQuestsRef = useRef<GladiatorQuestProgress[]>([]);
   unlockedGladiatorQuestsRef.current = unlockedGladiatorQuests;
 
   // Audio toggles
@@ -9759,9 +1704,11 @@ export default function App() {
   activeExpeditionsRef.current = activeExpeditions;
 
   // Starting Roster: Starts with just 1 single gladiator (Valerius Iron-Wall), matching the manager's opening monologue!
-  const [gladiators, setGladiators] = useState<Gladiator[]>([
-    {...INITIAL_GLADIATORS[0]},
-  ]);
+  // The live roster is `gladiatorsRef` (the 60 FPS loop reads and replaces it). React subscribes to it through the
+  // roster store: `gladiators` below only changes on discrete roster mutations and on the ~10 Hz flush.
+  const gladiatorsRef = useRef<Gladiator[]>([{...INITIAL_GLADIATORS[0]}]);
+  const roster = useMemo(() => createRoster(gladiatorsRef), []);
+  const gladiators = useSyncExternalStore(roster.subscribe, roster.getSnapshot);
 
   const [aftermathData, setAftermathData] = useState<AftermathData | null>(null);
   const [selectedCampGladId, setSelectedCampGladId] = useState<string | null>(null);
@@ -9771,17 +1718,7 @@ export default function App() {
   const storyStateRef = useRef<ActiveStoryState>(INITIAL_STORY_STATE);
   storyStateRef.current = storyState;
   const storyCooldownRef = useRef<number>(40 + Math.random() * 20);
-  const [gladiatorBonds, setGladiatorBonds] = useState<Record<string, number>>(() => {
-    const bonds: Record<string, number> = {};
-    const glads = INITIAL_GLADIATORS;
-    for (let i = 0; i < glads.length; i++) {
-      for (let j = i + 1; j < glads.length; j++) {
-        const key = [glads[i].id, glads[j].id].sort().join('__');
-        bonds[key] = 16 + ((i * 3 + j * 5) % 6);
-      }
-    }
-    return bonds;
-  });
+  const [gladiatorBonds, setGladiatorBonds] = useState<Record<string, number>>(SAVE_SCHEMA.bonds.initial);
 
   // Multi-Fighter Squad Selection (Player can select 1 to 3 gladiators)
   const [selectedGladiatorIds, setSelectedGladiatorIds] = useState<string[]>([
@@ -9880,12 +1817,24 @@ export default function App() {
   const matchTimerRef = useRef(0);
   const nextProjId = useRef(1);
 
-  // Sync state refs for loop
-  const gladiatorsRef = useRef(gladiators);
-  gladiatorsRef.current = gladiators;
-
+  // Sync state refs for loop (the roster is not one of them: gladiatorsRef is the source of truth, see above)
   const gameStateRef = useRef(gameState);
   gameStateRef.current = gameState;
+
+  // Narrow write API (stable for the life of the component): every gold change goes through `economy`;
+  // every roster change goes through `roster` (declared with the roster state above).
+  const economy = useMemo(() => createEconomy(setGameState), []);
+
+  // ~10 Hz: publish roster changes the 60 FPS camp loop made in the ref, so HP bars and roster lists stay live
+  // without re-rendering React every frame.
+  useEffect(() => {
+    const id = window.setInterval(roster.flush, 100);
+    return () => window.clearInterval(id);
+  }, [roster]);
+
+  // The sandbox telemetry panel reads live fighter counts from arenaFightersRef while rendering, so while a
+  // battle is on screen the HUD re-renders at ~10 Hz.
+  useHudTick(mode === 'arena');
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -9923,6 +1872,55 @@ export default function App() {
   const unlockedChainsRef = useRef(unlockedChains);
   unlockedChainsRef.current = unlockedChains;
 
+  // Live game <-> save schema (see src/systems/saveSchema.ts). Every persisted field is listed here once: how to read
+  // it and how to write it (state setter + mirror ref). `SaveBindings` is checked against the schema at compile time.
+  // Everything referenced is a ref or a stable setter, so one instance for the life of the component is correct.
+  const saveBindings = useMemo<SaveBindings>(
+    () => ({
+      gold: {
+        get: () => gameStateRef.current.gold,
+        set: (gold) => {
+          setGameState((prev) => ({...prev, gold, status: 'PLAYING'}));
+          setDisplayedGold(gold);
+          displayedGoldRef.current = gold;
+          prevGoldRef.current = gold;
+        },
+      },
+      score: {
+        get: () => gameStateRef.current.score,
+        set: (score) => setGameState((prev) => ({...prev, score})),
+      },
+      day: bindRef(dayCounterRef, setDayCounter),
+      timeOfDay: {
+        get: () => campTimeOfDayRef.current,
+        set: (t) => {
+          campTimeOfDayRef.current = t;
+        },
+      },
+      weather: bindRef(campWeatherRef, setCampWeather),
+      gladiators: {get: () => gladiatorsRef.current, set: (glads) => roster.set(glads)},
+      playerInventory: bindRef(playerInventoryRef, setPlayerInventory),
+      unlockedTierIndex: bindRef(unlockedTierIndexRef, setUnlockedTierIndex),
+      totalBattlesWon: bindRef(totalBattlesWonRef, setTotalBattlesWon),
+      totalRecruited: bindRef(totalRecruitedRef, setTotalRecruited),
+      managerRenown: bindRef(managerRenownRef, setManagerRenown),
+      speechcraftLevel: bindRef(speechcraftLevelRef, setSpeechcraftLevel),
+      ludusUpgrades: bindRef(ludusUpgradesRef, setLudusUpgrades),
+      isFeastUnlocked: bindRef(isFeastUnlockedRef, setIsFeastUnlocked),
+      isColiseumChampion: bindRef(isColiseumChampionRef, setIsColiseumChampion),
+      isEmperorEnraged: bindRef(isEmperorEnragedRef, setIsEmperorEnraged),
+      isEmperorDefeated: bindRef(isEmperorDefeatedRef, setIsEmperorDefeated),
+      isRevoltUnlocked: bindRef(isRevoltUnlockedRef, setIsRevoltUnlocked),
+      bonds: bindRef(gladiatorBondsRef, setGladiatorBonds),
+      physicianCost: bindRef(physicianCostRef, setPhysicianCost),
+      memorialGraves: bindRef(memorialGravesRef, setMemorialGraves),
+      unlockedChains: bindRef(unlockedChainsRef, setUnlockedChains),
+      unlockedGladiatorQuests: bindRef(unlockedGladiatorQuestsRef, setUnlockedGladiatorQuests),
+      firstBattleDone: bindRef(firstBattleDoneRef, setFirstBattleDone),
+    }),
+    [],
+  );
+
   // LocalStorage Persistence Engine
   const triggerAutosave = useCallback((incrementDay = false) => {
     try {
@@ -9932,43 +1930,9 @@ export default function App() {
         setDayCounter(nextDay);
       }
 
-      const gladsToSave = gladiatorsRef.current.map((g) => ({
-        ...g,
-        status: g.status === 'In Arena' ? ('Available' as const) : g.status,
-        questWalkState: 'none' as const,
-        hidden: false,
-      }));
+      const saveData = serializeSave(saveBindings);
 
-      const saveData = {
-        version: 1,
-        timestamp: Date.now(),
-        gold: gameStateRef.current.gold,
-        score: gameStateRef.current.score,
-        day: nextDay,
-        timeOfDay: campTimeOfDayRef.current,
-        weather: campWeatherRef.current,
-        gladiators: gladsToSave,
-        playerInventory: playerInventoryRef.current,
-        unlockedTierIndex: unlockedTierIndexRef.current,
-        totalBattlesWon: totalBattlesWonRef.current,
-        totalRecruited: totalRecruitedRef.current,
-        managerRenown: managerRenownRef.current,
-        speechcraftLevel: speechcraftLevelRef.current,
-        ludusUpgrades: ludusUpgradesRef.current,
-        isFeastUnlocked: isFeastUnlockedRef.current,
-        isColiseumChampion: isColiseumChampionRef.current,
-        isEmperorEnraged: isEmperorEnragedRef.current,
-        isEmperorDefeated: isEmperorDefeatedRef.current,
-        isRevoltUnlocked: isRevoltUnlockedRef.current,
-        bonds: gladiatorBondsRef.current,
-        physicianCost: physicianCostRef.current,
-        memorialGraves: memorialGravesRef.current,
-        unlockedChains: unlockedChainsRef.current,
-        unlockedGladiatorQuests: unlockedGladiatorQuestsRef.current,
-        firstBattleDone: firstBattleDoneRef.current,
-      };
-
-      localStorage.setItem('gladiator_manager_save', JSON.stringify(saveData));
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
       setHasExistingSave(true);
 
       // Trigger diegetic save indicator in camp for 2.5 seconds
@@ -9987,157 +1951,22 @@ export default function App() {
 
   const restoreSavedGame = useCallback((): boolean => {
     try {
-      const raw = localStorage.getItem('gladiator_manager_save');
+      const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (!data || typeof data !== 'object') return false;
 
-      if (typeof data.gold === 'number') {
-        setGameState((prev) => ({
-          ...prev,
-          gold: data.gold,
-          score: typeof data.score === 'number' ? data.score : prev.score,
-          status: 'PLAYING',
-        }));
-        setDisplayedGold(data.gold);
-        displayedGoldRef.current = data.gold;
-        prevGoldRef.current = data.gold;
-      }
+      const restored = restoreSave(saveBindings, data);
 
-      if (typeof data.day === 'number') {
-        const d = Math.max(1, data.day);
-        setDayCounter(d);
-        dayCounterRef.current = d;
-      }
-
-      if (typeof data.timeOfDay === 'number') {
-        campTimeOfDayRef.current = data.timeOfDay;
-      }
-
-      if (data.weather === 'rain' || data.weather === 'clear') {
-        setCampWeather(data.weather);
-        campWeatherRef.current = data.weather;
-      }
-
-      if (Array.isArray(data.gladiators) && data.gladiators.length > 0) {
-        const restored = data.gladiators.map((rawG: any) => {
-          const cleaned: Gladiator = {
-            ...rawG,
-            status: rawG.status === 'In Arena' ? ('Available' as const) : rawG.status,
-            questWalkState: 'none' as const,
-            hidden: false,
-            x: Math.max(38, Math.min(295, rawG.x || 100)),
-            y: Math.max(90, Math.min(166, rawG.y || 120)),
-            targetX: Math.max(38, Math.min(295, rawG.targetX || 100)),
-            targetY: Math.max(90, Math.min(166, rawG.targetY || 120)),
-            state: 'idle',
-            targetActivity: 'idle',
-            hp: Math.max(1, rawG.hp || rawG.maxHp || 150),
-          };
-          return recalculateGladiatorStats(cleaned);
-        });
-        setGladiators(restored);
-        gladiatorsRef.current = restored;
-        const living = restored.filter((g) => g.hp > 0);
+      // Selection follows the restored roster; Lanista stamina is not saved and always starts full.
+      if (restored.includes('gladiators')) {
+        const living = gladiatorsRef.current.filter((g) => g.hp > 0);
         if (living.length > 0) {
           setSelectedGladiatorIds([living[0].id]);
         }
       }
-
-      if (Array.isArray(data.playerInventory)) {
-        setPlayerInventory(data.playerInventory);
-        playerInventoryRef.current = data.playerInventory;
-      }
-
-      if (typeof data.unlockedTierIndex === 'number') {
-        setUnlockedTierIndex(data.unlockedTierIndex);
-        unlockedTierIndexRef.current = data.unlockedTierIndex;
-      }
-
-      if (typeof data.totalBattlesWon === 'number') {
-        setTotalBattlesWon(data.totalBattlesWon);
-        totalBattlesWonRef.current = data.totalBattlesWon;
-      }
-
-      if (typeof data.totalRecruited === 'number') {
-        setTotalRecruited(data.totalRecruited);
-        totalRecruitedRef.current = data.totalRecruited;
-      }
-
-      // Lanista stats: Stamina resets to 100 on load as per specification
       setManagerStamina(100);
       managerStaminaRef.current = 100;
-
-      if (typeof data.managerRenown === 'number') {
-        setManagerRenown(data.managerRenown);
-        managerRenownRef.current = data.managerRenown;
-      }
-
-      if (typeof data.speechcraftLevel === 'number') {
-        setSpeechcraftLevel(data.speechcraftLevel);
-        speechcraftLevelRef.current = data.speechcraftLevel;
-      }
-
-      if (data.ludusUpgrades && typeof data.ludusUpgrades === 'object') {
-        setLudusUpgrades(data.ludusUpgrades);
-        ludusUpgradesRef.current = data.ludusUpgrades;
-      }
-
-      if (typeof data.isFeastUnlocked === 'boolean') {
-        setIsFeastUnlocked(data.isFeastUnlocked);
-        isFeastUnlockedRef.current = data.isFeastUnlocked;
-      }
-
-      if (typeof data.isColiseumChampion === 'boolean') {
-        setIsColiseumChampion(data.isColiseumChampion);
-        isColiseumChampionRef.current = data.isColiseumChampion;
-      }
-
-      if (typeof data.isEmperorEnraged === 'boolean') {
-        setIsEmperorEnraged(data.isEmperorEnraged);
-        isEmperorEnragedRef.current = data.isEmperorEnraged;
-      }
-
-      if (typeof data.isEmperorDefeated === 'boolean') {
-        setIsEmperorDefeated(data.isEmperorDefeated);
-        isEmperorDefeatedRef.current = data.isEmperorDefeated;
-      }
-
-      if (typeof data.isRevoltUnlocked === 'boolean') {
-        setIsRevoltUnlocked(data.isRevoltUnlocked);
-        isRevoltUnlockedRef.current = data.isRevoltUnlocked;
-      }
-
-      if (data.bonds && typeof data.bonds === 'object') {
-        setGladiatorBonds(data.bonds);
-        gladiatorBondsRef.current = data.bonds;
-      }
-
-      if (typeof data.physicianCost === 'number') {
-        const pCost = Math.max(50, data.physicianCost);
-        setPhysicianCost(pCost);
-        physicianCostRef.current = pCost;
-      }
-
-      if (Array.isArray(data.memorialGraves)) {
-        setMemorialGraves(data.memorialGraves);
-        memorialGravesRef.current = data.memorialGraves;
-      }
-
-      if (Array.isArray(data.unlockedChains)) {
-        setUnlockedChains(data.unlockedChains);
-        unlockedChainsRef.current = data.unlockedChains;
-      }
-
-      if (Array.isArray(data.unlockedGladiatorQuests)) {
-        setUnlockedGladiatorQuests(data.unlockedGladiatorQuests);
-        unlockedGladiatorQuestsRef.current = data.unlockedGladiatorQuests;
-      }
-
-      if (typeof data.firstBattleDone === 'boolean') {
-        setFirstBattleDone(data.firstBattleDone);
-        firstBattleDoneRef.current = data.firstBattleDone;
-      }
 
       // Seamless restoration into camp
       cinematicStateRef.current = 4;
@@ -10217,8 +2046,7 @@ export default function App() {
     );
 
     // Permadeath: Remove gladiator entirely from player roster to immediately free up their slot (Max 5 slots)
-    setGladiators((prev) => prev.filter((g) => g.id !== deadGlad.id));
-    gladiatorsRef.current = gladiatorsRef.current.filter((g) => g.id !== deadGlad.id);
+    roster.remove(deadGlad.id);
     setSelectedGladiatorIds((prev) => prev.filter((id) => id !== deadGlad.id));
 
     setMemorialGraves((prev) => {
@@ -10808,8 +2636,7 @@ export default function App() {
       }
     });
     lastDeployedGladIdsRef.current = [];
-    gladiatorsRef.current = restoredGlads;
-    setGladiators(restoredGlads);
+    roster.set(restoredGlads);
 
     if (
       firstBattleDoneRef.current &&
@@ -10870,29 +2697,20 @@ export default function App() {
   // Initialize / Restart Campaign
   const initGame = useCallback(() => {
     try {
-      localStorage.removeItem('gladiator_manager_save');
+      localStorage.removeItem(SAVE_KEY);
       setHasExistingSave(false);
     } catch (_) {}
     try {
       cinematicIntroMusic.stop(0.3);
     } catch (_) {}
     setCampMusicKick((n) => n + 1);
-    const startGold = getConfig('startingGold') as number;
     cinematicStateRef.current = 4;
     setCinematicState(4);
-    setGameState({
-      status: 'PLAYING',
-      score: 0,
-      level: 1,
-      gold: startGold,
-    });
-    setDisplayedGold(startGold);
-    displayedGoldRef.current = startGold;
-    prevGoldRef.current = startGold;
+    // Every persisted field goes back to its schema default (src/systems/saveSchema.ts).
+    resetToInitial(saveBindings);
+    setGameState((prev) => ({...prev, level: 1}));
     goldTallyRef.current.isTallying = false;
     flyingGoldCoinsRef.current = [];
-    setDayCounter(1);
-    dayCounterRef.current = 1;
     setMode('camp');
     modeRef.current = 'camp';
     setActiveTier(null);
@@ -10917,9 +2735,6 @@ export default function App() {
     setQuestResolution(null);
     setCourierNotice(null);
     courierTimerRef.current = 55;
-    setUnlockedChains(['chain_corrupt_senator', 'chain_shadow_broker', 'chain_priestess_bellona']);
-    setUnlockedGladiatorQuests([]);
-    unlockedGladiatorQuestsRef.current = [];
     setIsSimPaused(false);
     setSimSpeed(1);
     setCombatLogs([]);
@@ -10928,29 +2743,12 @@ export default function App() {
     arenaFightersRef.current = [];
     particlesRef.current = [];
 
-    const bonds: Record<string, number> = {};
-    const glads = INITIAL_GLADIATORS;
-    for (let i = 0; i < glads.length; i++) {
-      for (let j = i + 1; j < glads.length; j++) {
-        const key = [glads[i].id, glads[j].id].sort().join('__');
-        bonds[key] = 16 + ((i * 3 + j * 5) % 6);
-      }
-    }
-    setGladiatorBonds(bonds);
     lowestHpPctRef.current = {};
     battleRageEventsRef.current = [];
     unbondedDeathsRef.current = [];
     setAftermathData(null);
     setIsBondingModalOpen(false);
     setSelectedCampGladId(null);
-    setUnlockedTierIndex(0);
-    setIsColiseumChampion(false);
-    setIsEmperorEnraged(false);
-    isEmperorEnragedRef.current = false;
-    setIsEmperorDefeated(false);
-    isEmperorDefeatedRef.current = false;
-    setIsRevoltUnlocked(false);
-    isRevoltUnlockedRef.current = false;
     setIsEmperorDuel(false);
     isEmperorDuelRef.current = false;
     setIsEmperorDuelModalOpen(false);
@@ -10960,9 +2758,6 @@ export default function App() {
     podiumTimerRef.current = 0;
     podiumHasIgnitedRef.current = false;
     podiumFlashTimerRef.current = 0;
-    setMemorialGraves(INITIAL_MEMORIAL_GRAVES);
-    setPhysicianCost(50);
-    physicianCostRef.current = 50;
     physicianNpcRef.current = INITIAL_PHYSICIAN_STATE;
     setPhysicianNpc(INITIAL_PHYSICIAN_STATE);
     setBattlefieldLoot(null);
@@ -10977,12 +2772,8 @@ export default function App() {
     visitorTimerRef.current = 25 + Math.random() * 20;
     setIsBanditAlarmOpen(false);
     isBanditRaidRef.current = false;
-    setCampWeather('clear');
-    campWeatherRef.current = 'clear';
-    campTimeOfDayRef.current = 35;
     courierNpcRef.current = INITIAL_COURIER_STATE;
     setCourierNpcState(INITIAL_COURIER_STATE);
-    setPlayerInventory([]);
     setArmoryTab('armoria');
     setActiveEquipSelector(null);
     setHoveredGraveId(null);
@@ -11001,8 +2792,6 @@ export default function App() {
     setTutorialStage('idle');
     tutorialIdleTimerRef.current = 0;
     tutorialWineTimerRef.current = 0;
-    firstBattleDoneRef.current = false;
-    setFirstBattleDone(false);
     postBattleStageRef.current = 'none';
     setPostBattleStage('none');
     postBattleTimerRef.current = 0;
@@ -11039,14 +2828,8 @@ export default function App() {
     setKeeperSequence(null);
     keeperSequenceRef.current = null;
     pendingPostFifthDialogueRef.current = false;
-    setTotalRecruited(1);
-    totalRecruitedRef.current = 1;
-    setTotalBattlesWon(0);
-    totalBattlesWonRef.current = 0;
     setManagerStamina(100);
     managerStaminaRef.current = 100;
-    setIsFeastUnlocked(false);
-    isFeastUnlockedRef.current = false;
     setFeastState(null);
     feastStateRef.current = null;
     setFeastSlaves([]);
@@ -11060,7 +2843,6 @@ export default function App() {
     etherealSparksRef.current = [];
     crowdAudioTimerRef.current = 2.0;
 
-    setGladiators([{...INITIAL_GLADIATORS[0]}]);
     setSelectedGladiatorIds([INITIAL_GLADIATORS[0].id]);
 
     if (sdk) {
@@ -11074,26 +2856,23 @@ export default function App() {
     setActiveEquipSelector(null);
 
     // Particle Exit Effect: Trigger particle effect in canvas draw loop for any gladiator marked with justEquipped === true
-    setGladiators((prev) => {
-      let anyEquipped = false;
-      const next = prev.map((g) => {
-        if (g.justEquipped) {
-          anyEquipped = true;
-          return {
-            ...g,
-            equipParticleTimer: 2.0,
-          };
-        }
-        return g;
-      });
-      if (anyEquipped) {
-        gameAudio.playPowerupChime();
-      } else {
-        gameAudio.playCrispClick();
+    let anyEquipped = false;
+    const next = gladiatorsRef.current.map((g) => {
+      if (g.justEquipped) {
+        anyEquipped = true;
+        return {
+          ...g,
+          equipParticleTimer: 2.0,
+        };
       }
-      gladiatorsRef.current = next;
-      return next;
+      return g;
     });
+    if (anyEquipped) {
+      gameAudio.playPowerupChime();
+    } else {
+      gameAudio.playCrispClick();
+    }
+    roster.set(next);
   }, []);
 
   const closeArmoryModalRef = useRef(closeArmoryModal);
@@ -11155,8 +2934,7 @@ export default function App() {
       setPlayerInventory((prev) => [...prev, ...oldItemsToReturn]);
     }
 
-    gladiatorsRef.current = updatedGlads;
-    setGladiators(updatedGlads);
+    roster.set(updatedGlads);
     setBattlefieldLoot(null);
     gameAudio.playPowerupChime();
     addCombatLog(
@@ -11547,8 +3325,7 @@ export default function App() {
       };
     });
 
-    gladiatorsRef.current = updatedGlads;
-    setGladiators(updatedGlads);
+    roster.set(updatedGlads);
 
     // Return speech bubble
     if (isAlive) {
@@ -11900,7 +3677,7 @@ export default function App() {
     };
     newGlad = recalculateGladiatorStats(newGlad);
     if (!isFree) {
-      setGameState((prev) => ({...prev, gold: prev.gold - cost}));
+      economy.debit(cost);
     } else {
       setFreeRecruitCultures((prev) => prev.filter((c) => c !== template.culture));
       freeRecruitCulturesRef.current = freeRecruitCulturesRef.current.filter((c) => c !== template.culture);
@@ -11908,8 +3685,7 @@ export default function App() {
     setTotalRecruited((prev) => prev + 1);
     totalRecruitedRef.current += 1;
     const nextRoster = [...gladiatorsRef.current, newGlad];
-    gladiatorsRef.current = nextRoster;
-    setGladiators(nextRoster);
+    roster.set(nextRoster);
 
     // Auto-select recruit into squad if fewer than 3 gladiators selected
     setSelectedGladiatorIds((prev) => {
@@ -12007,12 +3783,11 @@ export default function App() {
       isWalkingIn: true,
     };
     newCav = recalculateGladiatorStats(newCav);
-    setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+    economy.debit(cost);
     setTotalRecruited((prev) => prev + 1);
     totalRecruitedRef.current += 1;
     const nextRoster = [...gladiatorsRef.current, newCav];
-    gladiatorsRef.current = nextRoster;
-    setGladiators(nextRoster);
+    roster.set(nextRoster);
     gameAudio.playLevelUpStinger();
     gameAudio.playCoinPickup();
     addCombatLog('🐎 Recruited Imperial War Horse (350 Gold) from the Beastmaster! Added to warrior roster.', 'neutral');
@@ -12065,12 +3840,11 @@ export default function App() {
       isWalkingIn: true,
     };
     newElephant = recalculateGladiatorStats(newElephant);
-    setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+    economy.debit(cost);
     setTotalRecruited((prev) => prev + 1);
     totalRecruitedRef.current += 1;
     const nextRoster = [...gladiatorsRef.current, newElephant];
-    gladiatorsRef.current = nextRoster;
-    setGladiators(nextRoster);
+    roster.set(nextRoster);
     gameAudio.playElephantTrumpet();
     gameAudio.playCoinPickup();
     addCombatLog('🐘 Recruited Carthaginian War Elephant (800 Gold) from the Beastmaster! Added to warrior roster.', 'neutral');
@@ -12081,28 +3855,25 @@ export default function App() {
     const cost = getConfig('armoryUpgradeCostBase') as number;
     if (gameState.gold < cost) return;
 
-    setGladiators((prev) =>
-      prev.map((g) => {
-        if (g.id !== gladiatorId) return g;
-        if (gearType === 'weapon') {
-          return {
-            ...g,
-            weaponLevel: g.weaponLevel + 1,
-            attack: g.attack + 5,
-          };
-        } else {
-          return {
-            ...g,
-            armorLevel: g.armorLevel + 1,
-            defense: g.defense + 4,
-            maxHp: g.maxHp + 25,
-            hp: g.hp + 25,
-          };
-        }
-      }),
-    );
+    roster.patch(gladiatorId, (g) => {
+      if (gearType === 'weapon') {
+        return {
+          ...g,
+          weaponLevel: g.weaponLevel + 1,
+          attack: g.attack + 5,
+        };
+      } else {
+        return {
+          ...g,
+          armorLevel: g.armorLevel + 1,
+          defense: g.defense + 4,
+          maxHp: g.maxHp + 25,
+          hp: g.hp + 25,
+        };
+      }
+    });
 
-    setGameState((prev) => ({...prev, gold: prev.gold - cost}));
+    economy.debit(cost);
     gameAudio.playLevelUpStinger();
   };
 
@@ -12147,11 +3918,7 @@ export default function App() {
 
         if (choice.rewards) {
           const rw = choice.rewards;
-          setGameState((prev) => ({
-            ...prev,
-            gold: Math.max(0, prev.gold + (rw.gold || 0)),
-            score: prev.score + (rw.gold || 0),
-          }));
+          economy.credit(rw.gold || 0, {floorAtZero: true, addToScore: true});
           if (rw.unlockChain) {
             setUnlockedChains((prev) =>
               prev.includes(rw.unlockChain!) ? prev : [...prev, rw.unlockChain!],
@@ -12190,32 +3957,25 @@ export default function App() {
               animTimer: 0,
               flipX: false,
             };
-            setGladiators((prev) => [...prev, newGlad]);
+            roster.add(newGlad);
             gameAudio.playLevelUpStinger();
           }
           if (glad && rw.heal) {
-            setGladiators((prev) =>
-              prev.map((g) => (g.id === glad.id ? { ...g, hp: Math.min(g.maxHp, g.hp + rw.heal!) } : g)),
-            );
+            roster.patch(glad.id, (g) => ({ ...g, hp: Math.min(g.maxHp, g.hp + rw.heal!) }));
           }
           gameAudio.playCoinPickup();
         }
 
         if (choice.penalty) {
           const pen = choice.penalty;
-          setGameState((prev) => ({
-            ...prev,
-            gold: Math.max(0, prev.gold + (pen.gold || 0)),
-          }));
+          economy.credit(pen.gold || 0, {floorAtZero: true});
           if (glad && pen.damage) {
-            setGladiators((prev) =>
-              prev.map((g) => {
-                if (g.id !== glad.id) return g;
-                const remHp = Math.max(0, g.hp - pen.damage!);
-                if (remHp <= 0) recordGladiatorDeath(g);
-                return { ...g, hp: remHp };
-              }),
-            );
+            const target = gladiatorsRef.current.find((g) => g.id === glad.id);
+            if (target) {
+              const remHp = Math.max(0, target.hp - pen.damage!);
+              if (remHp <= 0) recordGladiatorDeath(target);
+              else roster.patch(target.id, { hp: remHp });
+            }
           }
           gameAudio.playMeleePunch();
         }
@@ -12274,8 +4034,7 @@ export default function App() {
           questWalkTotal: 2.0,
         };
       });
-      gladiatorsRef.current = updatedGlads;
-      setGladiators(updatedGlads);
+      roster.set(updatedGlads);
 
       // Immediately remove dispatched gladiator from squad selection so they do not occupy phantom slots
       setSelectedGladiatorIds((prev) => prev.filter((id) => id !== glad.id));
@@ -12339,11 +4098,7 @@ export default function App() {
 
       // Apply dynamic consequences to Ludus
       if (rewards) {
-        setGameState((prev) => ({
-          ...prev,
-          gold: prev.gold + (rewards.gold || 0),
-          score: prev.score + (rewards.gold || 0),
-        }));
+        economy.credit(rewards.gold || 0, {addToScore: true});
         if (rewards.unlockChain) {
           setUnlockedChains((prev) =>
             prev.includes(rewards.unlockChain!) ? prev : [...prev, rewards.unlockChain!],
@@ -12382,15 +4137,14 @@ export default function App() {
             animTimer: 0,
             flipX: false,
           };
-          setGladiators((prev) => [...prev, newGlad]);
+          // roster.add writes the ref as well as state, so the gladiatorsRef.current.map
+          // below includes the recruit instead of overwriting it.
+          roster.add(newGlad);
         }
       }
 
       if (penalty) {
-        setGameState((prev) => ({
-          ...prev,
-          gold: Math.max(0, prev.gold + (penalty.gold || 0)),
-        }));
+        economy.credit(penalty.gold || 0, {floorAtZero: true});
       }
 
       // Update gladiator status, persistent damage, XP, and permadeath in both ref and state
@@ -12436,8 +4190,7 @@ export default function App() {
         return updatedGladFinal;
       });
 
-      gladiatorsRef.current = updatedList;
-      setGladiators(updatedList);
+      roster.set(updatedList);
 
       // Play audio cue
       if (isSuccess) {
@@ -12497,9 +4250,7 @@ export default function App() {
 
   // Change individual gladiator tactics
   const setGladiatorTactics = (gladId: string, tactics: CombatTactics) => {
-    setGladiators((prev) =>
-      prev.map((g) => (g.id === gladId ? {...g, tactics} : g)),
-    );
+    roster.patch(gladId, {tactics});
     gameAudio.playCrispClick();
   };
 
@@ -12590,8 +4341,7 @@ export default function App() {
       hp: g.maxHp,
       pepTalkStatus: 'Inspire' as const,
     }));
-    gladiatorsRef.current = fullyHealed;
-    setGladiators(fullyHealed);
+    roster.set(fullyHealed);
 
     // 3. Mark feast action unlocked permanently
     setIsFeastUnlocked(true);
@@ -12676,8 +4426,7 @@ export default function App() {
         sitCooldown: 0,
       };
     });
-    gladiatorsRef.current = seatedGlads;
-    setGladiators(seatedGlads);
+    roster.set(seatedGlads);
 
     gameAudio.playPotionGulp();
     gameAudio.playPowerupChime();
@@ -12702,7 +4451,7 @@ export default function App() {
     }
     setManagerStamina((prev) => Math.max(0, prev - 33));
     managerStaminaRef.current = Math.max(0, managerStaminaRef.current - 33);
-    setGameState((prev) => ({ ...prev, gold: Math.max(0, prev.gold - 50) }));
+    economy.debit(50, {floorAtZero: true});
     triggerCampFeast(false);
     setIsManagerMenuOpen(false);
     setActiveCascadingSubMenu('none');
@@ -12735,8 +4484,7 @@ export default function App() {
         attributes: nextAttrs,
       };
     });
-    gladiatorsRef.current = updated;
-    setGladiators(updated);
+    roster.set(updated);
 
     gameAudio.playPowerupChime();
     campSpeechBubblesRef.current.push({
@@ -12776,8 +4524,7 @@ export default function App() {
         attributes: nextAttrs,
       });
     });
-    gladiatorsRef.current = updated;
-    setGladiators(updated);
+    roster.set(updated);
 
     gameAudio.playSwordClash();
     campSpeechBubblesRef.current.push({
@@ -12809,7 +4556,7 @@ export default function App() {
 
     setManagerStamina((prev) => Math.max(0, prev - 33));
     managerStaminaRef.current = Math.max(0, managerStaminaRef.current - 33);
-    setGameState((prev) => ({ ...prev, gold: Math.max(0, prev.gold - physicianCostRef.current) }));
+    economy.debit(physicianCostRef.current, {floorAtZero: true});
 
     const pState: PhysicianNpcState = {
       ...INITIAL_PHYSICIAN_STATE,
@@ -12894,7 +4641,7 @@ export default function App() {
     targetGlad.pepTalkStatus = 'Inspire';
     const recalc = recalculateGladiatorStats(targetGlad);
     Object.assign(targetGlad, recalc);
-    setGladiators([...gladiatorsRef.current]);
+    roster.refresh();
     gameAudio.playPowerupChime();
     campSpeechBubblesRef.current.push({
       id: `manager_motivate_${Date.now()}_${targetGlad.id}`,
@@ -12934,7 +4681,7 @@ export default function App() {
     targetGlad.pepTalkStatus = 'Rage';
     const recalc = recalculateGladiatorStats(targetGlad);
     Object.assign(targetGlad, recalc);
-    setGladiators([...gladiatorsRef.current]);
+    roster.refresh();
     gameAudio.playSwordClash();
     campSpeechBubblesRef.current.push({
       id: `manager_intimidate_${Date.now()}_${targetGlad.id}`,
@@ -13012,8 +4759,7 @@ export default function App() {
     prodigy = recalculateGladiatorStats(prodigy);
 
     const nextRoster = [...gladiatorsRef.current, prodigy];
-    gladiatorsRef.current = nextRoster;
-    setGladiators(nextRoster);
+    roster.set(nextRoster);
 
     // Trigger arrival welcome banter
     const existingLiving = gladiatorsRef.current.filter((g) => g.hp > 0 && g.id !== prodigy.id);
@@ -13083,7 +4829,7 @@ export default function App() {
       }
       return g;
     });
-    gladiatorsRef.current = safeGlads;
+    roster.set(safeGlads);
 
     // Hard limit: for Arena Side Quests, enforce hard limit - player cannot select more gladiators than enemies present!
     // For Coliseum Trials, allow up to 4 gladiators on 3rd podium and above!
@@ -13127,8 +4873,7 @@ export default function App() {
     const nextGlads = safeGlads.map((g) =>
       deployedGlads.some((dg) => dg.id === g.id) ? { ...g, status: 'In Arena' as const } : g,
     );
-    gladiatorsRef.current = nextGlads;
-    setGladiators(nextGlads);
+    roster.set(nextGlads);
 
     setActiveTier(tier);
     activeTierRef.current = tier;
@@ -13196,7 +4941,7 @@ export default function App() {
         extraCrit += 0.15;
       }
 
-      return {
+      return buildFighter({
         id: `p_fighter_${g.id}_${Date.now()}_${idx}`,
         sourceGladiatorId: g.id,
         isPlayerTeam: true,
@@ -13206,8 +4951,6 @@ export default function App() {
         level: Math.max(1, g.level || 1),
         hp: gladHp,
         maxHp: gladMaxHp,
-        stamina: 100,
-        maxStamina: 100,
         attack: Math.max(5, Math.round((g.attack || 20) * scoutAtkMult)),
         defense: Math.max(0, Math.round(g.defense || 10)),
         speed: Math.max(1, Math.round(g.speed || 10)),
@@ -13228,20 +4971,12 @@ export default function App() {
         pepTalkThreatened: g.pepTalkThreatened,
         x: startX,
         y: Math.max(88, Math.min(160, startY)),
-        vx: 0,
-        vy: 0,
         flipX: false, // facing right towards opponents
-        state: 'idle',
         animTimer: idx * 0.3,
         attackCooldown: initialAtkCd,
         tacticsTimer: 1.0 + Math.random(),
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 1.0 + Math.random() * 3.0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     // Spawn Enemy Squad Fighters on Right Side (Cloned fresh with guaranteed positive HP > 0)
@@ -13322,7 +5057,7 @@ export default function App() {
       const startX = 280 - col * 28;
       const startY = 92 + row * 26 + (col === 1 ? 12 : 0);
 
-      return {
+      return buildFighter({
         id: `e_fighter_${idx}_${tmpl.culture}_${Date.now()}_${Math.random()}`,
         isPlayerTeam: false,
         name: tmpl.name,
@@ -13331,8 +5066,6 @@ export default function App() {
         level: enemyLevel,
         hp: tunedHp,
         maxHp: tunedHp,
-        stamina: 100,
-        maxStamina: 100,
         attack: Math.max(5, enemyAtk),
         defense: Math.max(0, enemyDef),
         speed: Math.max(1, enemySpd),
@@ -13347,23 +5080,15 @@ export default function App() {
         elephantChargeCooldown: tmpl.isElephant ? 2.0 : undefined,
         x: startX,
         y: Math.max(88, Math.min(160, startY)),
-        vx: 0,
-        vy: 0,
         flipX: true, // facing left towards player squad
-        state: 'idle',
         animTimer: idx * 0.4,
         attackCooldown: 0.5 + idx * 0.2,
         tacticsTimer: 1.2 + Math.random(),
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 1.0 + Math.random() * 3.0,
         consecutiveMisses: 0,
         repositionTimer: 0,
         stationaryDuelTimer: 0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     arenaFightersRef.current = [...playerFighters, ...enemyFighters];
@@ -13426,8 +5151,7 @@ export default function App() {
     const nextGlads = gladiatorsRef.current.map((g) =>
       g.id === chosenGlad.id ? { ...g, status: 'In Arena' as const } : g,
     );
-    gladiatorsRef.current = nextGlads;
-    setGladiators(nextGlads);
+    roster.set(nextGlads);
 
     const rightW = chosenGlad.equipped?.rightHand ? WEAPON_DATABASE[chosenGlad.equipped.rightHand] : null;
     const leftW = chosenGlad.equipped?.leftHand ? WEAPON_DATABASE[chosenGlad.equipped.leftHand] : null;
@@ -13439,7 +5163,7 @@ export default function App() {
       ? (rightW?.pinBonus || 0)
       : (rightW?.pinBonus || 0) + (leftW?.pinBonus || 0);
 
-    const playerFighter: ArenaFighter = {
+    const playerFighter: ArenaFighter = buildFighter({
       id: `p_fighter_${chosenGlad.id}`,
       sourceGladiatorId: chosenGlad.id,
       isPlayerTeam: true,
@@ -13449,8 +5173,6 @@ export default function App() {
       level: chosenGlad.level,
       hp: chosenGlad.hp,
       maxHp: chosenGlad.maxHp,
-      stamina: 100,
-      maxStamina: 100,
       attack: chosenGlad.attack,
       defense: chosenGlad.defense,
       speed: chosenGlad.speed,
@@ -13472,25 +5194,17 @@ export default function App() {
       pepTalkThreatened: chosenGlad.pepTalkThreatened,
       x: 88,
       y: 125,
-      vx: 0,
-      vy: 0,
       flipX: false,
-      state: 'idle',
       animTimer: 0,
       attackCooldown: 0.4,
       tacticsTimer: 1.0,
-      isBaiting: false,
-      pinnedTimer: 0,
       pinCooldown: 4.0,
       consecutiveMisses: 0,
       repositionTimer: 0,
       stationaryDuelTimer: 0,
-      deathTimer: 0,
-      flashWhiteTimer: 0,
-      rageTimer: 0,
-    };
+    });
 
-    const emperorFighter: ArenaFighter = {
+    const emperorFighter: ArenaFighter = buildFighter({
       id: `emperor_aurelius_${Date.now()}`,
       isPlayerTeam: false,
       isEmperor: true,
@@ -13500,8 +5214,6 @@ export default function App() {
       level: 5,
       hp: 520,
       maxHp: 520,
-      stamina: 100,
-      maxStamina: 100,
       attack: 42,
       defense: 25,
       speed: 13,
@@ -13511,23 +5223,15 @@ export default function App() {
       pinBonus: 0.20,
       x: 250,
       y: 125,
-      vx: 0,
-      vy: 0,
       flipX: true,
-      state: 'idle',
       animTimer: 0,
       attackCooldown: 0.5,
       tacticsTimer: 1.2,
-      isBaiting: false,
-      pinnedTimer: 0,
       pinCooldown: 3.5,
       consecutiveMisses: 0,
       repositionTimer: 0,
       stationaryDuelTimer: 0,
-      deathTimer: 0,
-      flashWhiteTimer: 0,
-      rageTimer: 0,
-    };
+    });
 
     arenaFightersRef.current = [playerFighter, emperorFighter];
     setActiveTier(EMPEROR_DUEL_TIER);
@@ -13580,8 +5284,7 @@ export default function App() {
     const nextGlads = gladiatorsRef.current.map((g) =>
       activePlayerGlads.some((ag) => ag.id === g.id) ? { ...g, status: 'In Arena' as const } : g,
     );
-    gladiatorsRef.current = nextGlads;
-    setGladiators(nextGlads);
+    roster.set(nextGlads);
 
     const deployedPlayerFighters: ArenaFighter[] = activePlayerGlads.map((g, idx) => {
       const col = idx % 2;
@@ -13589,7 +5292,7 @@ export default function App() {
       const startX = 60 + col * 20;
       const startY = 95 + row * 24;
 
-      return {
+      return buildFighter({
         id: `p_glad_${g.id}`,
         sourceGladiatorId: g.id,
         isPlayerTeam: true,
@@ -13599,8 +5302,6 @@ export default function App() {
         level: g.level,
         hp: g.hp,
         maxHp: g.maxHp,
-        stamina: 100,
-        maxStamina: 100,
         attack: g.attack,
         defense: g.defense,
         speed: g.speed,
@@ -13608,20 +5309,12 @@ export default function App() {
         equipped: g.equipped,
         x: startX,
         y: Math.max(88, Math.min(160, startY)),
-        vx: 0,
-        vy: 0,
         flipX: false,
-        state: 'idle',
         animTimer: idx * 0.2,
         attackCooldown: 0.4 + idx * 0.1,
         tacticsTimer: 1.0,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 2.0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     // Alongside 15 low-armor Rebel Slaves (low health, low defense, fast attack speeds)
@@ -13631,7 +5324,7 @@ export default function App() {
       const startX = 35 + (idx % 3) * 16 + (Math.random() * 8 - 4);
       const startY = 88 + Math.floor(idx / 3) * 15 + (Math.random() * 6 - 3);
 
-      return {
+      return buildFighter({
         id: `rebel_slave_${idx}_${Date.now()}`,
         isPlayerTeam: true,
         name: `Rebel Slave ${toRoman(idx + 1)}`,
@@ -13640,28 +5333,18 @@ export default function App() {
         level: 1,
         hp: 48,
         maxHp: 48,
-        stamina: 100,
-        maxStamina: 100,
         attack: 16,
         defense: 3,
         speed: 21,
         tactics: 'aggressive',
         x: Math.max(35, Math.min(120, startX)),
         y: Math.max(86, Math.min(164, startY)),
-        vx: 0,
-        vy: 0,
         flipX: false,
-        state: 'idle',
         animTimer: Math.random() * 2,
         attackCooldown: 0.25 + Math.random() * 0.3,
         tacticsTimer: 1.0,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 2.5,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     // Enemy Side: 10 heavily armored Roman Legionaries (massive HP, high defense, slow attack)
@@ -13671,7 +5354,7 @@ export default function App() {
       const startX = 250 - col * 24 + (Math.random() * 6 - 3);
       const startY = 90 + row * 15 + (Math.random() * 6 - 3);
 
-      return {
+      return buildFighter({
         id: `roman_legionary_${idx}_${Date.now()}`,
         isPlayerTeam: false,
         name: `Roman Legionary ${toRoman(idx + 1)}`,
@@ -13680,28 +5363,18 @@ export default function App() {
         level: 3,
         hp: 340,
         maxHp: 340,
-        stamina: 100,
-        maxStamina: 100,
         attack: 28,
         defense: 22,
         speed: 8,
         tactics: 'defensive',
         x: Math.max(200, Math.min(300, startX)),
         y: Math.max(86, Math.min(164, startY)),
-        vx: 0,
-        vy: 0,
         flipX: true,
-        state: 'idle',
         animTimer: Math.random() * 2,
         attackCooldown: 1.1 + Math.random() * 0.4,
         tacticsTimer: 1.5,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 3.0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     arenaFightersRef.current = [...deployedPlayerFighters, ...slaveFighters, ...romanFighters];
@@ -13779,10 +5452,9 @@ export default function App() {
     const nextGlads = gladiatorsRef.current.map((g) =>
       activePlayerGlads.some((ag) => ag.id === g.id) ? { ...g, status: 'In Arena' as const } : g,
     );
-    gladiatorsRef.current = nextGlads;
-    setGladiators(nextGlads);
+    roster.set(nextGlads);
 
-    const playerFighters: ArenaFighter[] = activePlayerGlads.map((g, idx) => ({
+    const playerFighters: ArenaFighter[] = activePlayerGlads.map((g, idx) => buildFighter({
       id: `p_defend_${g.id}`,
       sourceGladiatorId: g.id,
       isPlayerTeam: true,
@@ -13792,8 +5464,6 @@ export default function App() {
       level: g.level,
       hp: g.hp,
       maxHp: g.maxHp,
-      stamina: 100,
-      maxStamina: 100,
       attack: g.attack,
       defense: g.defense,
       speed: g.speed,
@@ -13801,23 +5471,15 @@ export default function App() {
       equipped: g.equipped,
       x: 65 + (idx % 2) * 25,
       y: 95 + Math.floor(idx / 2) * 22,
-      vx: 0,
-      vy: 0,
       flipX: false,
-      state: 'idle',
       animTimer: idx * 0.2,
       attackCooldown: 0.3 + idx * 0.1,
       tacticsTimer: 1.0,
-      isBaiting: false,
-      pinnedTimer: 0,
       pinCooldown: 2.0,
-      deathTimer: 0,
-      flashWhiteTimer: 0,
-      rageTimer: 0,
     }));
 
     const bandits: ArenaFighter[] = [
-      {
+      buildFighter({
         id: `bandit_cutthroat_${Date.now()}_1`,
         isPlayerTeam: false,
         name: 'Rogue Cutthroat',
@@ -13826,29 +5488,19 @@ export default function App() {
         level: 2,
         hp: 140,
         maxHp: 140,
-        stamina: 100,
-        maxStamina: 100,
         attack: 24,
         defense: 10,
         speed: 14,
         tactics: 'aggressive',
         x: 260,
         y: 105,
-        vx: 0,
-        vy: 0,
         flipX: true,
-        state: 'idle',
         animTimer: 0,
         attackCooldown: 0.5,
         tacticsTimer: 1.0,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 2.5,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      },
-      {
+      }),
+      buildFighter({
         id: `bandit_marauder_${Date.now()}_2`,
         isPlayerTeam: false,
         name: 'Camp Marauder',
@@ -13857,29 +5509,19 @@ export default function App() {
         level: 2,
         hp: 155,
         maxHp: 155,
-        stamina: 100,
-        maxStamina: 100,
         attack: 25,
         defense: 9,
         speed: 13,
         tactics: 'aggressive',
         x: 275,
         y: 130,
-        vx: 0,
-        vy: 0,
         flipX: true,
-        state: 'idle',
         animTimer: 0.2,
         attackCooldown: 0.4,
         tacticsTimer: 1.2,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 3.0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      },
-      {
+      }),
+      buildFighter({
         id: `bandit_outlaw_${Date.now()}_3`,
         isPlayerTeam: false,
         name: 'Outlaw Slinger',
@@ -13888,28 +5530,18 @@ export default function App() {
         level: 2,
         hp: 120,
         maxHp: 120,
-        stamina: 100,
-        maxStamina: 100,
         attack: 22,
         defense: 8,
         speed: 16,
         tactics: 'ranged',
         x: 290,
         y: 150,
-        vx: 0,
-        vy: 0,
         flipX: true,
-        state: 'idle',
         animTimer: 0.4,
         attackCooldown: 0.6,
         tacticsTimer: 1.0,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 2.5,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      },
+      }),
     ];
 
     arenaFightersRef.current = [...playerFighters, ...bandits];
@@ -13963,688 +5595,6 @@ export default function App() {
     adCountdownRef.current = 5.0;
     gameAudio.playCrispClick();
   };
-
-  const finishSandboxDuelInternal = useCallback(
-    (isVictory: boolean) => {
-      const allGlads = gladiatorsRef.current;
-      const fighters = arenaFightersRef.current;
-      const survivingGlads = allGlads.map((g) => {
-        const matchFighter = fighters.find((f) => f.sourceGladiatorId === g.id);
-        if (!matchFighter) return g;
-        return {
-          ...g,
-          hp: Math.max(1, Math.round(matchFighter.hp)),
-        };
-      });
-      gladiatorsRef.current = survivingGlads;
-      setGladiators(survivingGlads);
-
-      const narratives = isVictory
-        ? [
-            'The slave uprising overwhelmed the Roman legionaries in the burning streets!',
-            'Rebel banners flew high above the ruined Roman gate. Rome has been seized!',
-          ]
-        : [
-            'The disciplined legionary formation held fast against the unarmored slave charge.',
-            'The uprising was quelled as Roman reinforcements cordoned off the gate.',
-          ];
-
-      const deployedGladIds = lastDeployedGladIdsRef.current;
-      const partyMembers: PartyMemberPostBattle[] = deployedGladIds.map((gladId) => {
-        const g = allGlads.find((x) => x.id === gladId) || allGlads[0];
-        const matchFighter = fighters.find((f) => f.sourceGladiatorId === gladId);
-        return {
-          id: g.id,
-          name: g.name,
-          culture: g.culture,
-          title: g.title,
-          startLevel: g.level,
-          endLevel: g.level,
-          startXp: g.xp,
-          endXp: g.xp,
-          xpNeeded: g.xpNeeded,
-          xpGained: isVictory ? 100 : 0,
-          startBondPips: 5,
-          endBondPips: 5,
-          didLevelUp: false,
-          hpRemaining: matchFighter ? Math.max(1, Math.round(matchFighter.hp)) : g.hp,
-          maxHp: g.maxHp,
-          heroType: g.heroType,
-          gladiatorClass: g.gladiatorClass,
-        };
-      });
-
-      setAftermathData({
-        isVictory,
-        isTrial: false,
-        tierName: 'Rome in Flames (The Revolt to Seize Rome)',
-        goldEarned: isVictory ? 240 : 0,
-        narratives,
-        bondShifts: [],
-        partyMembers,
-      });
-
-      if (isVictory) {
-        setCombatOutcome('victory');
-        combatOutcomeRef.current = 'victory';
-        setTotalBattlesWon((prev) => prev + 1);
-        totalBattlesWonRef.current += 1;
-        setGameState((prev) => ({
-          ...prev,
-          status: 'VICTORY',
-          score: prev.score + 5000,
-        }));
-        gameAudio.playVictoryFanfare();
-      } else {
-        setCombatOutcome('defeat');
-        combatOutcomeRef.current = 'defeat';
-        gameAudio.playDefeatMotif();
-      }
-    },
-    [],
-  );
-
-  // Internal Conclude Duel & Apply Persistent Health / Rewards / Bond Shifts / Aftermath
-  const finishDuelInternal = useCallback(
-    (isVictory: boolean, verdict: 'thumbs_up' | 'thumbs_down', isTrial: boolean) => {
-      const tier = activeTierRef.current;
-      const fighters = arenaFightersRef.current;
-      const allGlads = gladiatorsRef.current;
-
-      // Identify surviving and near-death deployed gladiators
-      const deployedGladIds = selectedGladiatorIds.filter((id) =>
-        allGlads.some((g) => g.id === id),
-      );
-
-      // Downed gladiators logic:
-      // In Hero recruitment / side-quest battles, all deaths are strictly PERMANENT.
-      // Downed gladiators NEVER survive with 1 HP in hero side quests / side-skirmishes!
-      const isHeroOrSideQuest = !isTrial || !!tier?.heroReward || !!tier?.isFortifiedQuest || isSpecialNarrativeQuest(tier);
-      if (verdict === 'thumbs_up' && !isHeroOrSideQuest) {
-        fighters.forEach((f) => {
-          if (f.isPlayerTeam && f.sourceGladiatorId && f.hp <= 0) {
-            f.hp = 1;
-            f.state = 'idle';
-          }
-        });
-      }
-
-      const survivingDeployedGlads = allGlads.filter((g) => {
-        if (!deployedGladIds.includes(g.id)) return false;
-        const fighter = fighters.find((f) => f.sourceGladiatorId === g.id);
-        return fighter && fighter.hp > 0;
-      });
-      const survivingDeployedIds = survivingDeployedGlads.map((g) => g.id);
-
-      // Check near-death survivors (<25% HP at any point during combat)
-      const nearDeathSurvivorIds = survivingDeployedIds.filter((id) => {
-        const minPct = lowestHpPctRef.current[id] ?? 1;
-        return minPct <= 0.25;
-      });
-
-      // Compute pairwise bond shifts
-      const newBonds = {...gladiatorBondsRef.current};
-      const bondShifts: BondShiftRecord[] = [];
-      const narratives: string[] = [];
-
-      // 1. Bond Shifts across all pairs
-      for (let i = 0; i < allGlads.length; i++) {
-        for (let j = i + 1; j < allGlads.length; j++) {
-          const g1 = allGlads[i];
-          const g2 = allGlads[j];
-          const pairKey = [g1.id, g2.id].sort().join('__');
-          const currentScore = newBonds[pairKey] ?? 15;
-          let delta = 0;
-          let reason = '';
-
-          const bothDeployedAndAlive =
-            survivingDeployedIds.includes(g1.id) && survivingDeployedIds.includes(g2.id);
-
-          if (bothDeployedAndAlive) {
-            // Winning a match together gives +8 bond increase
-            if (isVictory) {
-              delta += 8;
-              reason = 'Victory squadmates (+8)';
-            }
-            // Near-death survival: +12 bond if either/both survived grievous wounds
-            if (nearDeathSurvivorIds.includes(g1.id) || nearDeathSurvivorIds.includes(g2.id)) {
-              delta += 12;
-              reason = reason ? `${reason} & Forged in blood (+12)` : 'Forged in blood (+12)';
-            }
-          } else {
-            // Bond decays slightly (-2) each match for gladiator pairs that did not participate together
-            const neitherDeployed =
-              !deployedGladIds.includes(g1.id) && !deployedGladIds.includes(g2.id);
-            const onlyOneDeployed =
-              (deployedGladIds.includes(g1.id) && !deployedGladIds.includes(g2.id)) ||
-              (!deployedGladIds.includes(g1.id) && deployedGladIds.includes(g2.id));
-
-            if (neitherDeployed || onlyOneDeployed) {
-              delta = -2;
-              reason = 'Idle camp detachment (-2)';
-            }
-          }
-
-          if (delta !== 0) {
-            const updatedScore = Math.max(0, Math.min(100, currentScore + delta));
-            newBonds[pairKey] = updatedScore;
-            bondShifts.push({
-              pairKey,
-              glad1Name: g1.name,
-              glad2Name: g2.name,
-              delta,
-              newScore: updatedScore,
-              reason,
-            });
-          }
-        }
-      }
-
-      setGladiatorBonds(newBonds);
-
-      // 2. Generate atmospheric Post-Battle Narrative Derived from Battle Events
-      // Low health survival narratives
-      nearDeathSurvivorIds.forEach((id) => {
-        const survivor = allGlads.find((g) => g.id === id);
-        if (survivor) {
-          narratives.push(
-            `Seeing ${survivor.name} fight through grievous wounds and survive forged a deeper bond with their squadmates (+12 Bond).`,
-          );
-        }
-      });
-
-      // Bonded death & rage narratives
-      battleRageEventsRef.current.forEach((evt) => {
-        narratives.push(
-          `The death of ${evt.fallenName} shattered ${evt.survivorName}'s composure, triggering a blinding blood rage that will haunt the ludus forever.`,
-        );
-      });
-
-      // Unbonded death narratives
-      unbondedDeathsRef.current.forEach((fallenName) => {
-        narratives.push(
-          `The death of ${fallenName} was met with cold silence—the detachment weighed heavily on the camp.`,
-        );
-      });
-
-      // Verdict narrative for Emperor's Judgment / Quest Mortality
-      if (!isHeroOrSideQuest) {
-        if (verdict === 'thumbs_up') {
-          narratives.push(
-            `The Emperor extended his thumb UP in royal clemency! Downed gladiators survived with 1 HP.`,
-          );
-        } else if (verdict === 'thumbs_down') {
-          narratives.push(
-            `The Emperor extended his thumb DOWN in merciless judgment! Fallen warriors were permanently executed.`,
-          );
-        }
-      } else {
-        const downedInQuest = fighters.filter(
-          (f) => f.isPlayerTeam && f.sourceGladiatorId && f.hp <= 0,
-        );
-        if (downedInQuest.length > 0) {
-          narratives.push(
-            `All casualties sustained during this expedition are permanent. The fallen have been laid to rest at the camp memorial wall.`,
-          );
-        }
-      }
-
-      // Victory bond boost narrative
-      if (isVictory && survivingDeployedGlads.length >= 2) {
-        const squadNames = survivingDeployedGlads.map((g) => g.name).join(' & ');
-        narratives.push(
-          `Fighting shoulder-to-shoulder in the sands of victory tightened the camaraderie between ${squadNames} (+8 Bond).`,
-        );
-      } else if (!isVictory && narratives.length === 0) {
-        narratives.push(
-          'Defeat scarred the arena sands. The fallen and wounded were dragged back to camp to nurse their injuries in silent contemplation.',
-        );
-      }
-
-      // Check for fallen / executed gladiators to erect cultural memorial graves and remove from roster
-      fighters.forEach((f) => {
-        if (f.isPlayerTeam && f.sourceGladiatorId && (f.hp <= 0 || f.isDead || f.state === 'death')) {
-          const deadGlad = allGlads.find((g) => g.id === f.sourceGladiatorId);
-          if (deadGlad) {
-            recordGladiatorDeath(deadGlad);
-          }
-        }
-      });
-
-      // Sync persistent HP and XP back to camp gladiators (Permadeath Cap: dead gladiators omitted to free roster slots)
-      const survivingGlads: Gladiator[] = [];
-      for (const g of allGlads) {
-        const matchFighter = fighters.find((f) => f.sourceGladiatorId === g.id);
-        if (!matchFighter) {
-          if (g.status === 'In Arena') {
-            survivingGlads.push({ ...g, status: 'Available' as const });
-          } else {
-            survivingGlads.push(g);
-          }
-          continue;
-        }
-
-        // If HP <= 0, permanently deceased - do not add back to roster!
-        if (matchFighter.hp <= 0 || matchFighter.isDead || matchFighter.state === 'death') {
-          continue;
-        }
-
-        if (isVictory) {
-          const currentTierIdx = tier ? BATTLE_TIERS.findIndex((t) => t.id === tier.id) : 0;
-          const trainingMult = 1 + (ludusUpgrades.trainingGrounds * 0.25);
-          // Reduce leveling XP gain by 20% (multiplier 0.8)
-          const xpGained = Math.round((60 + Math.max(0, currentTierIdx) * 35) * trainingMult * 0.8);
-          const newXp = g.xp + xpGained;
-          let lvl = g.level;
-          let needed = g.xpNeeded;
-          let curAttrs = g.attributes || { str: 10, dex: 10, vit: 10, con: 10, wil: 10 };
-
-          if (newXp >= needed && lvl < 5) {
-            lvl += 1; // Max Level V
-            needed = Math.floor(needed * 1.5);
-            gameAudio.playLevelUpStinger();
-
-            // Archetype / Cultural stat growth increases (+1 to +2 across STR, DEX, VIT)
-            const strGain = (g.culture === 'celt' || g.culture === 'hunnic' || g.weightClass === 'Heavyweight' || g.weightClass === 'Colossal' || g.isCavalry || g.isElephant) ? 2 : 1;
-            const dexGain = (g.culture === 'berber' || g.culture === 'scythian' || g.weightClass === 'Lightweight' || (g.isCavalry && !g.isElephant)) ? 2 : 1;
-            const vitGain = (g.culture === 'roman' || g.weightClass === 'Heavyweight' || g.weightClass === 'Colossal' || g.isElephant) ? 2 : 1;
-
-            curAttrs = {
-              ...curAttrs,
-              str: (curAttrs.str ?? 10) + strGain,
-              dex: (curAttrs.dex ?? 10) + dexGain,
-              vit: (curAttrs.vit ?? curAttrs.con ?? 10) + vitGain,
-              con: (curAttrs.vit ?? curAttrs.con ?? 10) + vitGain,
-            };
-          }
-
-          const updatedGlad: Gladiator = recalculateGladiatorStats({
-            ...g,
-            status: 'Available',
-            hp: Math.max(1, Math.round(matchFighter.hp)),
-            kills: g.kills + 1,
-            level: lvl,
-            xp: lvl >= 5 ? 0 : newXp % needed,
-            xpNeeded: needed,
-            attributes: curAttrs,
-            pepTalkStatus: undefined,
-            pepTalkThreatened: false,
-          });
-
-          survivingGlads.push(updatedGlad);
-        } else {
-          // If gladiator was threatened and failed the bout, enforce execution
-          if (matchFighter.pepTalkThreatened) {
-            recordGladiatorDeath(g);
-            narratives.push(
-              `⚡ Contractually bound by the Threaten decree, ${g.name} was permanently dismissed/executed following defeat!`,
-            );
-          } else {
-            survivingGlads.push({
-              ...g,
-              status: 'Available' as const,
-              hp: Math.max(1, Math.round(matchFighter.hp)),
-              pepTalkStatus: undefined,
-              pepTalkThreatened: false,
-            });
-          }
-        }
-      }
-
-      // 2.5 AWARD UNIQUE LEGENDARY HEROES ON FORTIFIED QUEST VICTORY
-      if (isVictory && tier?.heroReward) {
-        const rewardHeroType = tier.heroReward;
-        const alreadyHasHero = survivingGlads.some((g) => g.heroType === rewardHeroType);
-        if (!alreadyHasHero && survivingGlads.length < 10) {
-          let heroToAdd: Gladiator | null = null;
-          if (rewardHeroType === 'beastmaster') heroToAdd = { ...HERO_BEASTMASTER, id: `hero_beastmaster_${Date.now()}` };
-          else if (rewardHeroType === 'saladin') heroToAdd = { ...HERO_SALADIN, id: `hero_saladin_${Date.now()}` };
-          else if (rewardHeroType === 'zuzubu') heroToAdd = { ...HERO_ZUZUBU, id: `hero_zuzubu_${Date.now()}` };
-
-          if (heroToAdd) {
-            heroToAdd = recalculateGladiatorStats({
-              ...heroToAdd,
-              x: -30,
-              y: 115,
-              targetX: 110 + Math.random() * 50,
-              targetY: 110 + Math.random() * 25,
-              state: 'walking',
-              targetActivity: 'idle',
-              isWalkingIn: true,
-              flipX: false,
-            });
-            survivingGlads.push(heroToAdd);
-            narratives.push(
-              `🏆 LEGENDARY HERO UNLOCKED: ${heroToAdd.name} (${heroToAdd.title}) was so impressed by your victory that they have joined your Ludus!`,
-            );
-            triggerHeroArrival(heroToAdd);
-            gameAudio.playPowerupChime();
-          }
-        } else if (!alreadyHasHero && survivingGlads.length >= 10) {
-          narratives.push(
-            `A legendary hero offered their allegiance, but your stable was full (10/10). They bestowed an honorary tribute of +400 Gold!`,
-          );
-          setGameState((prev) => ({ ...prev, gold: prev.gold + 400 }));
-        }
-      }
-
-      gladiatorsRef.current = survivingGlads;
-      setGladiators(survivingGlads);
-
-      // 3. Battlefield Salvage on Victory (Even if Survivors):
-      // For each defeated enemy, roll a 25% chance to scavenge a battlefield loot item scaled to that enemy's level!
-      // (Also retain 50% salvage chance when warrior executions occur)
-      const anyPlayerExecuted = fighters.some(
-        (f) => f.isPlayerTeam && f.sourceGladiatorId && f.hp <= 0,
-      );
-      const anyEnemyExecuted = fighters.some(
-        (f) => !f.isPlayerTeam && f.hp <= 0,
-      );
-      const warriorExecutionOccurred = verdict === 'thumbs_down' && (anyPlayerExecuted || anyEnemyExecuted);
-
-      let lootDroppedFromEnemy: ArenaFighter | null = null;
-      const defeatedEnemies = fighters.filter((f) => !f.isPlayerTeam && f.hp <= 0);
-      const allEnemies = fighters.filter((f) => !f.isPlayerTeam);
-
-      if (isVictory) {
-        // Roll 25% chance per defeated enemy
-        for (const defEnemy of defeatedEnemies) {
-          if (Math.random() < 0.25) {
-            lootDroppedFromEnemy = defEnemy;
-            break;
-          }
-        }
-      }
-
-      if (!lootDroppedFromEnemy && warriorExecutionOccurred && Math.random() < 0.50) {
-        lootDroppedFromEnemy =
-          defeatedEnemies.length > 0
-            ? defeatedEnemies[Math.floor(Math.random() * defeatedEnemies.length)]
-            : allEnemies[0] || null;
-      }
-
-      if (lootDroppedFromEnemy) {
-        const livingPlayerGlads = survivingGlads.filter((g) => g.hp > 0);
-        if (livingPlayerGlads.length > 0) {
-          const lootEnemy = lootDroppedFromEnemy;
-          const enemyLevel = lootEnemy ? lootEnemy.level : 1;
-          const enemyName = lootEnemy ? lootEnemy.name : 'Fallen Champion';
-
-          let poolWeapons: WeaponDef[] = [];
-          if (enemyLevel <= 2) {
-            poolWeapons = Object.values(WEAPON_DATABASE).filter((w) => w.tier === 1 && !w.isExotic);
-          } else if (enemyLevel <= 4) {
-            poolWeapons = Object.values(WEAPON_DATABASE).filter((w) => w.tier === 2 && !w.isExotic);
-          } else {
-            // Level 5+: Tier 3 or Caravan relic
-            poolWeapons = Object.values(WEAPON_DATABASE).filter((w) => w.tier === 3);
-          }
-
-          // Match one of the surviving gladiators
-          let candidateGlad = livingPlayerGlads.find((g) => !g.equipped.rightHand || !g.equipped.leftHand);
-          if (!candidateGlad) {
-            candidateGlad = livingPlayerGlads.find((g) => {
-              const rW = g.equipped.rightHand ? WEAPON_DATABASE[g.equipped.rightHand] : null;
-              const lW = g.equipped.leftHand ? WEAPON_DATABASE[g.equipped.leftHand] : null;
-              const curTier = enemyLevel <= 2 ? 1 : enemyLevel <= 4 ? 2 : 3;
-              return (rW && rW.tier < curTier) || (lW && lW.tier < curTier);
-            });
-          }
-          if (!candidateGlad) {
-            candidateGlad = livingPlayerGlads[Math.floor(Math.random() * livingPlayerGlads.length)];
-          }
-
-          let matchingPool: WeaponDef[] = [];
-          if (candidateGlad.equipped.leftHand === null && candidateGlad.equipped.rightHand !== null) {
-            matchingPool = poolWeapons.filter((w) => w.slotType === 'LEFT');
-          } else if (candidateGlad.equipped.rightHand === null && candidateGlad.equipped.leftHand !== null) {
-            matchingPool = poolWeapons.filter((w) => w.slotType === 'RIGHT' || w.slotType === 'BOTH');
-          } else if (candidateGlad.equipped.rightHand === null && candidateGlad.equipped.leftHand === null) {
-            matchingPool = poolWeapons;
-          } else {
-            const rW = candidateGlad.equipped.rightHand ? WEAPON_DATABASE[candidateGlad.equipped.rightHand] : null;
-            const lW = candidateGlad.equipped.leftHand ? WEAPON_DATABASE[candidateGlad.equipped.leftHand] : null;
-            if (rW && rW.tier < 3) {
-              matchingPool = poolWeapons.filter((w) => w.slotType === 'RIGHT' || w.slotType === 'BOTH');
-            } else if (lW && lW.tier < 3) {
-              matchingPool = poolWeapons.filter((w) => w.slotType === 'LEFT');
-            }
-          }
-
-          if (matchingPool.length === 0) {
-            matchingPool = poolWeapons;
-          }
-
-          const chosenWeapon =
-            matchingPool[Math.floor(Math.random() * matchingPool.length)] || poolWeapons[0];
-
-          if (chosenWeapon) {
-            setBattlefieldLoot({
-              enemyName,
-              item: chosenWeapon,
-              targetGladId: candidateGlad.id,
-              targetGladName: candidateGlad.name,
-            });
-            gameAudio.playPowerupChime();
-          }
-        }
-      }
-
-      let wonGold = isVictory ? (tier?.goldReward || 120) : 0;
-      const hasCrowdPleaser = survivingDeployedGlads.some((g) => g.traits?.includes('Crowd Pleaser'));
-      if (isVictory && hasCrowdPleaser) {
-        const crowdBonus = Math.round(wonGold * 0.25);
-        wonGold += crowdBonus;
-        narratives.push(
-          `👑 CROWD PLEASER BONUS: The roaring crowd rained +${crowdBonus} extra gold upon the sand for theatrical finishing blows!`,
-        );
-      }
-
-      // Advance Five-Tier Coliseum Progression ONLY if winning an official Coliseum Trial
-      let currentTierIdx = 0;
-      if (isVictory && isTrial && tier) {
-        currentTierIdx = BATTLE_TIERS.findIndex((t) => t.id === tier.id);
-        if (currentTierIdx >= 0) {
-          setUnlockedTierIndex((prev) => Math.max(prev, currentTierIdx + 1));
-          if (currentTierIdx === 4) {
-            setIsColiseumChampion(true);
-            setIsEmperorEnraged(true);
-            isEmperorEnragedRef.current = true;
-            pendingPostFifthDialogueRef.current = true;
-          }
-        }
-      } else if (tier) {
-        currentTierIdx = BATTLE_TIERS.findIndex((t) => t.id === tier.id);
-      }
-
-      if (isVictory) {
-        setTotalBattlesWon((prev) => prev + 1);
-        totalBattlesWonRef.current += 1;
-        const renownGain = hasCrowdPleaser ? 35 : 25;
-        setManagerRenown((prev) => prev + renownGain);
-        setSpeechcraftLevel((prev) => Math.min(5, Math.floor((managerRenown + renownGain) / 100) + 1));
-      }
-
-      if (tier?.id === 'tier_emperor') {
-        if (isVictory) {
-          setIsEmperorDefeated(true);
-          isEmperorDefeatedRef.current = true;
-          setIsRevoltUnlocked(true);
-          isRevoltUnlockedRef.current = true;
-          narratives.push(
-            'Emperor Aurelius collapses onto the bloodstained sands! His gilded gladius shatters in the dust, ending his tyrannical reign!',
-            'The crowd roars in stunned disbelief—word spreads like wildfire through Rome! The slave uprising awakens!',
-          );
-        } else {
-          narratives.push(
-            'The Emperor stood victorious over your champion. "Rome kneels to me alone!" Aurelius roared to the cheering patricians.',
-          );
-        }
-      } else if (currentTierIdx === 4 && isVictory) {
-        narratives.push(
-          'The Grand Coliseum Champion has fallen! But Emperor Aurelius rises from his royal throne in fury and descends to the arena sands!',
-          '"Insolent slaves!" the Emperor bellows. "I shall crush your champion with my own hands!" Challenge him in a 1-on-1 duel!',
-        );
-      }
-
-      // Reset side-quest bounty pool with fresh contracts whenever any battle concludes (deduplicating already recruited heroes)
-      if (tier) {
-        currentTierIdx = BATTLE_TIERS.findIndex((t) => t.id === tier.id);
-      }
-      const nextPodiumTier = isVictory && isTrial && currentTierIdx >= 0 ? currentTierIdx + 2 : unlockedTierIndex + 1;
-      setSideSkirmishes(generateSideSkirmishes(Math.max(1, nextPodiumTier), true, survivingGlads));
-
-      // Check Traveling Nomad Merchant spawn: 20% (1 in 5) chance whenever ANY fight concludes
-      const effectiveTier = isVictory && isTrial && tier && currentTierIdx >= 1 ? currentTierIdx + 1 : unlockedTierIndex;
-      if (effectiveTier >= 2 && !merchantStateRef.current.active) {
-        if (Math.random() < 0.20) {
-          merchantStateRef.current = {
-            active: true,
-            state: 'entering',
-            x: 24,
-            y: 110,
-            targetX: 180,
-            targetY: 106,
-            sitTimer: 22.0,
-            hasPlayedSitSpeech: false,
-            hasPlayedDepartSpeech: false,
-            flipX: false,
-            animTimer: 0,
-          };
-          setMerchantState({ ...merchantStateRef.current });
-        }
-      }
-
-      // Calculate Party Member progression for only participating squad gladiators
-      const partyMembers: PartyMemberPostBattle[] = deployedGladIds.map((gladId) => {
-        const g = allGlads.find((x) => x.id === gladId) || allGlads[0];
-        const matchFighter = fighters.find((f) => f.sourceGladiatorId === gladId);
-        const isDead = !matchFighter || matchFighter.hp <= 0;
-
-        const trainingMult = 1 + (ludusUpgrades.trainingGrounds * 0.25);
-        // Reduce leveling XP gain by 20% (multiplier 0.8)
-        const xpGained = isVictory && !isDead ? Math.round((60 + Math.max(0, currentTierIdx) * 35) * trainingMult * 0.8) : 0;
-        const startLevel = g.level;
-        const startXp = g.xp;
-        const xpNeeded = g.xpNeeded;
-        const totalXp = startXp + xpGained;
-        const didLevelUp = isVictory && !isDead && totalXp >= xpNeeded && startLevel < 5;
-        const endLevel = didLevelUp ? Math.min(5, startLevel + 1) : startLevel;
-        const endXp = didLevelUp ? totalXp % Math.floor(xpNeeded * 1.5) : isDead ? startXp : totalXp;
-
-        const strGain = (g.culture === 'celt' || g.culture === 'hunnic' || g.weightClass === 'Heavyweight' || g.weightClass === 'Colossal' || g.isCavalry || g.isElephant) ? 2 : 1;
-        const dexGain = (g.culture === 'berber' || g.culture === 'scythian' || g.weightClass === 'Lightweight' || (g.isCavalry && !g.isElephant)) ? 2 : 1;
-        const vitGain = (g.culture === 'roman' || g.weightClass === 'Heavyweight' || g.weightClass === 'Colossal' || g.isElephant) ? 2 : 1;
-        const statGains = didLevelUp ? { str: strGain, dex: dexGain, vit: vitGain } : undefined;
-        const curA = g.attributes || { str: 10, dex: 10, vit: 10, con: 10, wil: 10 };
-        const newStats = {
-          str: (curA.str ?? 10) + (didLevelUp ? strGain : 0),
-          dex: (curA.dex ?? 10) + (didLevelUp ? dexGain : 0),
-          vit: (curA.vit ?? curA.con ?? 10) + (didLevelUp ? vitGain : 0),
-        };
-
-        const otherPartyIds = deployedGladIds.filter((id) => id !== gladId);
-        let startBondScore = 30;
-        if (otherPartyIds.length > 0) {
-          const sum = otherPartyIds.reduce(
-            (acc, oid) => acc + (gladiatorBondsRef.current[[gladId, oid].sort().join('__')] ?? 15),
-            0,
-          );
-          startBondScore = Math.round(sum / otherPartyIds.length);
-        }
-        const bondGain = isVictory && !isDead ? 15 : 0;
-        const endBondScore = isDead ? startBondScore : Math.min(100, startBondScore + bondGain);
-
-        return {
-          id: g.id,
-          name: g.name,
-          culture: g.culture,
-          title: g.title,
-          startLevel,
-          endLevel,
-          startXp,
-          endXp,
-          xpNeeded,
-          xpGained,
-          startBondPips: Math.min(10, Math.floor(startBondScore / 10)),
-          endBondPips: Math.min(10, Math.floor(endBondScore / 10)),
-          didLevelUp,
-          statGains,
-          newStats,
-          hpRemaining: matchFighter ? Math.max(0, Math.round(matchFighter.hp)) : 0,
-          maxHp: g.maxHp,
-          heroType: g.heroType,
-          gladiatorClass: g.gladiatorClass,
-        };
-      });
-
-      // Populate aftermath narrative data
-      setAftermathData({
-        isVictory,
-        isTrial,
-        tierName: tier?.name || 'Coliseum Duel',
-        goldEarned: wonGold,
-        narratives,
-        bondShifts,
-        partyMembers,
-      });
-
-      if (isVictory) {
-        setCombatOutcome('victory');
-        combatOutcomeRef.current = 'victory';
-
-        // First Victory Tutorial Progression & Free Recruits Allocation
-        if (!firstBattleDoneRef.current) {
-          firstBattleDoneRef.current = true;
-          setFirstBattleDone(true);
-          pendingPostBattleTutorialRef.current = true;
-
-          const currentCultures = gladiatorsRef.current.map((g) => g.culture);
-          const unrecruited = INITIAL_GLADIATORS.filter(
-            (c) => !currentCultures.includes(c.culture),
-          );
-          const shuffled = [...unrecruited].sort(() => Math.random() - 0.5);
-          const freePicks = shuffled.slice(0, 2).map((c) => c.culture);
-          setFreeRecruitCultures(freePicks);
-          freeRecruitCulturesRef.current = freePicks;
-
-          heraldTimerRef.current = (30 + Math.random() * 90) * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
-        } else {
-          heraldTimerRef.current = (30 + Math.random() * 90) * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
-        }
-
-        setGameState((prev) => {
-          const newScore = prev.score + wonGold;
-          // Winning the 5th podium or Emperor duel does NOT end the campaign!
-          // Campaign victory is reserved strictly for winning the Slave Revolt (Seizing Rome)!
-          return {
-            ...prev,
-            score: newScore,
-            gold: prev.gold + wonGold,
-          };
-        });
-
-        gameAudio.playVictoryFanfare();
-      } else {
-        setCombatOutcome('defeat');
-        combatOutcomeRef.current = 'defeat';
-
-        const remainingAlive = gladiatorsRef.current.filter((g) => g.hp > 0);
-        const minGold = getConfig('minGoldLossThreshold') as number;
-        if (remainingAlive.length === 0 && gameStateRef.current.gold < minGold) {
-          setGameState((prev) => ({...prev, status: 'GAME_OVER'}));
-        }
-
-        gameAudio.playDefeatMotif();
-      }
-
-      // Persist battle results immediately
-      try {
-        triggerAutosave(false);
-      } catch (_) {}
-    },
-    [addCombatLog, recordGladiatorDeath, selectedGladiatorIds, unlockedTierIndex, triggerAutosave],
-  );
 
   // Conclude Duel entrypoint: triggers Emperor's Judgment Cinematic for ALL normal arena battles
   const finishDuel = useCallback(
@@ -16175,3695 +7125,278 @@ export default function App() {
     }
   };
 
-  // Main Simulation Loop
-  const update = (dt: number) => {
-    // 0. CINEMATIC INTRO STATE MACHINE (PHASES 0 TO 3)
-    if (cinematicStateRef.current < 4) {
-      const now = getSafeNow();
-      if (isNaN(cinematicPhaseStartTimeRef.current) || !cinematicPhaseStartTimeRef.current) {
-        cinematicPhaseStartTimeRef.current = now;
-      }
-      let elapsed = Math.max(0, (now - cinematicPhaseStartTimeRef.current) / 1000);
-      if (isNaN(elapsed)) {
-        elapsed = 0;
-        cinematicPhaseStartTimeRef.current = now;
-      }
-      const cState = Math.max(0, Math.min(3, cinematicStateRef.current || 0));
-
-      if (cState === 0) {
-        // Phase 1: The Manager (Hold ~3.0 seconds, then fade out)
-        if (elapsed >= 3.2) {
-          cinematicStateRef.current = 1;
-          setCinematicState(1);
-          cinematicPhaseStartTimeRef.current = getSafeNow();
-          try {
-            cinematicIntroMusic.setPhase(1);
-          } catch (_) {}
-        }
-      } else if (cState === 1) {
-        // Phase 2 & 3: The Approach & The Pan-Up (Hold, slide, pan up to deep darkness)
-        if (elapsed >= 2.2 && !emperorStabFiredRef.current) {
-          emperorStabFiredRef.current = true;
-          try {
-            cinematicIntroMusic.triggerEmperorPanStab();
-          } catch (_) {}
-        }
-        if (elapsed >= 7.0) {
-          cinematicStateRef.current = 2;
-          setCinematicState(2);
-          cinematicPhaseStartTimeRef.current = getSafeNow();
-          try {
-            cinematicIntroMusic.setPhase(2);
-          } catch (_) {}
-        }
-      } else if (cState === 2) {
-        // Phase 4: The Title (Fade in flanked by Roman columns, hold ~2.8s, fade out)
-        if (elapsed >= 4.0) {
-          cinematicStateRef.current = 3;
-          setCinematicState(3);
-          cinematicPhaseStartTimeRef.current = getSafeNow();
-          typewriterCharCountRef.current = 0;
-          typewriterCharTimerRef.current = 0;
-          isTypewriterDoneRef.current = false;
-          try {
-            cinematicIntroMusic.setPhase(3);
-          } catch (_) {}
-        }
-      } else if (cState === 3) {
-        // Phase 5: The Monologue (Typewriter text effect in VN dialogue box)
-        if (!isTypewriterDoneRef.current) {
-          typewriterCharTimerRef.current += dt;
-          const charInterval = 0.034;
-          while (
-            typewriterCharTimerRef.current >= charInterval &&
-            typewriterCharCountRef.current < INTRO_MONOLOGUE_TEXT.length
-          ) {
-            typewriterCharTimerRef.current -= charInterval;
-            typewriterCharCountRef.current += 1;
-            const ch = INTRO_MONOLOGUE_TEXT[typewriterCharCountRef.current - 1];
-            if (ch && ch !== ' ' && ch !== '.' && ch !== ',') {
-              const pitch = (ch.charCodeAt(0) % 5) - 2;
-              try {
-                gameAudio.playTypewriterBeep(pitch);
-              } catch (_) {}
-            }
-          }
-          if (typewriterCharCountRef.current >= INTRO_MONOLOGUE_TEXT.length) {
-            isTypewriterDoneRef.current = true;
-          }
-        }
-      }
-      return;
-    }
-
-    if (gameStateRef.current.status !== 'PLAYING' || isGameMenuOpen) return;
-
-    animTimeRef.current += dt;
-
-    // Update Gold Tally Count-Up Animation & Pitch Escalation Blips
-    const tally = goldTallyRef.current;
-    if (tally.isTallying) {
-      tally.timer += dt;
-      const tProg = Math.min(1, tally.timer / Math.max(0.001, tally.duration));
-      const nextVal = Math.round(tally.startGold + (tally.targetGold - tally.startGold) * tProg);
-
-      if (nextVal !== displayedGoldRef.current) {
-        displayedGoldRef.current = nextVal;
-        setDisplayedGold(nextVal);
-      }
-
-      // Rhythmic audio blips with rising pitch/frequency from ~440Hz up to ~880Hz+
-      tally.timeSinceBlip += dt;
-      if (tally.timeSinceBlip >= tally.blipInterval) {
-        tally.timeSinceBlip = 0;
-        const currentFreq = 440 + tProg * 440; // 440Hz up to 880Hz
-        gameAudio.playTallyBlip(currentFreq);
-      }
-
-      if (tProg >= 1) {
-        tally.isTallying = false;
-        displayedGoldRef.current = tally.targetGold;
-        setDisplayedGold(tally.targetGold);
-        gameAudio.playTallyBlip(920); // crisp final accent
-      }
-    }
-
-    // Update Flying Gold Particles Arcing Upward to Top-Right Counter
-    if (flyingGoldCoinsRef.current.length > 0) {
-      flyingGoldCoinsRef.current = flyingGoldCoinsRef.current.filter((coin) => {
-        coin.progress += coin.speed * dt;
-        if (coin.progress < 0) return true; // waiting on stagger delay
-
-        const p = Math.min(1, coin.progress);
-        const cpX = (coin.startX + coin.targetX) * 0.5;
-        const cpY = Math.min(coin.startY, coin.targetY) + coin.arcHeight;
-
-        const invT = 1 - p;
-        coin.x = invT * invT * coin.startX + 2 * invT * p * cpX + p * p * coin.targetX;
-        coin.y = invT * invT * coin.startY + 2 * invT * p * cpY + p * p * coin.targetY;
-        coin.rotation += coin.rotSpeed * dt;
-
-        if (p >= 1) {
-          goldTargetGlowTimerRef.current = 0.2;
-          for (let s = 0; s < 3; s++) {
-            particlesRef.current.push({
-              x: coin.targetX / PIXEL_SCALE,
-              y: coin.targetY / PIXEL_SCALE,
-              color: '#F7DEAA',
-              vx: (Math.random() - 0.5) * 16,
-              vy: -8 - Math.random() * 12,
-              life: 0.35,
-              maxLife: 0.35,
-              size: 2,
-            });
-          }
-          return false;
-        }
-        return true;
-      });
-    }
-
-    if (goldTargetGlowTimerRef.current > 0) {
-      goldTargetGlowTimerRef.current = Math.max(0, goldTargetGlowTimerRef.current - dt);
-    }
-
-    // Decay arena screen shake smoothly back to 0
-    if (screenShakeTimerRef.current > 0) {
-      screenShakeTimerRef.current = Math.max(0, screenShakeTimerRef.current - dt);
-      if (isNaN(screenShakeTimerRef.current) || screenShakeTimerRef.current < 0.001) {
-        screenShakeTimerRef.current = 0;
-      }
-    }
-
-    // Decrement Manager Action Bar Cooldowns
-    setCampActionCooldowns((prev) => ({
-      inspire: Math.max(0, prev.inspire - dt),
-      punish: Math.max(0, prev.punish - dt),
-      physician: Math.max(0, prev.physician - dt),
-      study: Math.max(0, prev.study - dt),
-    }));
-
-    setArenaActionCooldowns((prev) => ({
-      ...prev,
-      shout: Math.max(0, prev.shout - dt),
-      sand: Math.max(0, prev.sand - dt),
-      stimulant: Math.max(0, prev.stimulant - dt),
-    }));
-
-    // Dynamic Camp Visitor timer & lifecycle
-    if (currentVisitor) {
-      currentVisitor.timer -= dt;
-      if (currentVisitor.timer <= 0) {
-        setCurrentVisitor(null);
-      }
-    }
-
-    // SIMULATED AD OVERLAY COUNTDOWN IN SANDBOX BATTLE
-    if (isSimulatedAdActive) {
-      adCountdownRef.current -= dt;
-      setAdCountdown(Math.max(0, adCountdownRef.current));
-      if (adCountdownRef.current <= 0) {
-        setIsSimulatedAdActive(false);
-        // Spawn 5 extra Rebel Slaves to turn the tide!
-        const cultures: Culture[] = ['celt', 'berber', 'roman', 'scythian', 'hunnic'];
-        const extraSlaves: ArenaFighter[] = Array.from({ length: 5 }).map((_, idx) => {
-          const culture = cultures[idx % cultures.length];
-          const rx = 36 + Math.random() * 32;
-          const ry = 90 + Math.random() * 65;
-          return {
-            id: `rebel_reinforce_${Date.now()}_${idx}`,
-            isPlayerTeam: true,
-            name: `Rebel Reinforcement ${toRoman(idx + 1)}`,
-            culture,
-            title: 'Rebel Reinforcement',
-            level: 1,
-            hp: 55,
-            maxHp: 55,
-            stamina: 100,
-            maxStamina: 100,
-            attack: 18,
-            defense: 3,
-            speed: 22,
-            tactics: 'aggressive',
-            x: rx,
-            y: ry,
-            vx: 0,
-            vy: 0,
-            flipX: false,
-            state: 'idle',
-            animTimer: Math.random(),
-            attackCooldown: 0.2 + Math.random() * 0.2,
-            tacticsTimer: 1.0,
-            isBaiting: false,
-            pinnedTimer: 0,
-            pinCooldown: 2.0,
-            deathTimer: 0,
-            flashWhiteTimer: 0,
-            rageTimer: 0,
-          };
-        });
-
-        arenaFightersRef.current = [...arenaFightersRef.current, ...extraSlaves];
-        addCombatLog('✊ 5 Rebel Slaves join the uprising from the Roman alleys to turn the tide!', 'player');
-        gameAudio.playPowerupChime();
-      }
-      return; // Suspend combat simulation during simulated ad
-    }
-
-    // POST-FINISH HOLD TIMER (~2.5s hold on battlefield with NO Emperor's Judgment for Special Quests)
-    if (sandboxHoldTimerRef.current > 0) {
-      sandboxHoldTimerRef.current -= dt;
-      if (sandboxHoldTimerRef.current <= 0) {
-        sandboxHoldTimerRef.current = 0;
-        if (isEmperorDuelRef.current) {
-          isEmperorDuelRef.current = false;
-          setIsEmperorDuel(false);
-          finishDuelInternal(combatOutcomeRef.current === 'victory', 'thumbs_down', false);
-        } else if (isSandboxBattleRef.current) {
-          finishSandboxDuelInternal(combatOutcomeRef.current === 'victory');
-        } else {
-          // Special narrative quest (Rubicon, Alpine, Gallic, etc.) or Camp Defense:
-          // DEFEAT IN THIS REALM MEANS CERTAIN DEATH FOR ALL FALLEN WARRIORS (thumbs_down execution)!
-          const isVic = combatOutcomeRef.current === 'victory';
-          finishDuelInternal(isVic, isVic ? 'thumbs_up' : 'thumbs_down', false);
-        }
-      }
-      // Continue updating positions/particles slightly so combatants settle
-      arenaFightersRef.current.forEach((f) => {
-        f.animTimer += dt;
-        if (f.hp <= 0 && f.deathTimer > 0) {
-          f.deathTimer = Math.max(0, f.deathTimer - dt);
-          f.x += f.vx * dt;
-          f.y += f.vy * dt;
-          f.vx *= 0.88;
-          f.vy *= 0.88;
-        } else if (f.hp > 0) {
-          f.vx = 0;
-          f.vy = 0;
-          f.state = 'idle';
-        }
-      });
-      return;
-    }
-
-    // 0. EMPEROR'S JUDGMENT CINEMATIC TIMELINE (Post-Battle Cinematic)
-    if (modeRef.current === 'arena' && judgmentStateRef.current.active) {
-      const j = judgmentStateRef.current;
-      const now = getSafeNow();
-      const elapsed = Math.max(0, (now - j.startTime) / 1000);
-
-      // Advance animation timer so living fighters pace in place and death states settle
-      arenaFightersRef.current.forEach((f) => {
-        f.animTimer += dt;
-        if (f.hp <= 0 && f.deathTimer > 0) {
-          f.deathTimer = Math.max(0, f.deathTimer - dt);
-          f.x += f.vx * dt;
-          f.y += f.vy * dt;
-          f.vx *= 0.88;
-          f.vy *= 0.88;
-        } else if (f.hp > 0) {
-          // Living fighters walk in place with fixed world coordinates while emperor decides (Phases 1-4)
-          f.vx = 0;
-          f.vy = 0;
-          if (j.phase !== 'post_pan_hold') {
-            f.state = 'walking';
-          } else {
-            f.state = 'idle';
-          }
-        }
-      });
-      particlesRef.current = particlesRef.current.filter((p) => {
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        if (p.isBlood) {
-          p.vy += 45 * dt;
-        }
-        p.life -= dt;
-        return p.life > 0;
-      });
-
-      // Phase 1: The Hold & Pan (4.0s total: 2.0s hold on floor, 2.0s slow pan up to balcony, 2.0s hold on balcony)
-      if (elapsed < 2.0) {
-        j.phase = 'hold';
-        j.cameraPanY = 0;
-        if (!j.audioTriggered.build) {
-          j.audioTriggered.build = true;
-          playJudgmentAudio('build');
-        }
-      } else if (elapsed < 4.0) {
-        j.phase = 'pan_up';
-        const panProgress = Math.max(0, Math.min(1, (elapsed - 2.0) / 2.0));
-        // Smooth ease-in-out curve
-        const ease =
-          panProgress < 0.5
-            ? 2 * panProgress * panProgress
-            : -1 + (4 - 2 * panProgress) * panProgress;
-        j.cameraPanY = ease * 65;
-      } else if (elapsed < 6.0) {
-        j.phase = 'hold_balcony';
-        j.cameraPanY = 65;
-      }
-      // Phase 2: The Eye Cut-In (Anime-style dramatic box with speed lines & pupil shifting)
-      else if (elapsed < 8.2) {
-        j.phase = 'eye_cut_in';
-        j.cameraPanY = 65;
-      }
-      // Phase 3: The Flash & The Verdict
-      else if (elapsed < 8.4) {
-        j.phase = 'flash';
-        j.cameraPanY = 65;
-      } else if (elapsed < 10.7) {
-        j.phase = 'verdict';
-        j.cameraPanY = 65;
-        if (j.verdict === 'thumbs_up' && !j.audioTriggered.cheer) {
-          j.audioTriggered.cheer = true;
-          playJudgmentAudio('cheer');
-        } else if (j.verdict === 'thumbs_down' && !j.audioTriggered.slash) {
-          j.audioTriggered.slash = true;
-          playJudgmentAudio('slash');
-        }
-      }
-      // Phase 4: The Return (Quickly pan camera back down to arena floor over ~0.8s)
-      else if (elapsed < 11.5) {
-        j.phase = 'pan_down';
-        const returnProgress = Math.max(0, Math.min(1, (elapsed - 10.7) / 0.8));
-        const ease = returnProgress * returnProgress; // Accelerate back down
-        j.cameraPanY = 65 * (1 - ease);
-      }
-      // Phase 4 Part B / Execution Sequence:
-      // If verdict is thumbs_up (mercy): 2.0s hold on arena floor with panting gladiators, dust settling, ambient murmur
-      else if (j.verdict === 'thumbs_up') {
-        if (elapsed < 13.5) {
-          j.phase = 'post_pan_hold';
-          j.cameraPanY = 0;
-          if (!j.audioTriggered.murmur) {
-            j.audioTriggered.murmur = true;
-            playJudgmentAudio('build');
-          }
-          if (Math.random() < 0.25) {
-            particlesRef.current.push({
-              x: 50 + Math.random() * (LOGIC_WIDTH - 100),
-              y: 90 + Math.random() * 65,
-              color: Math.random() < 0.6 ? PALETTE[1] : PALETTE[0],
-              vx: (Math.random() - 0.5) * 6,
-              vy: 2 + Math.random() * 4,
-              life: 0.85,
-              maxLife: 0.85,
-              size: 1,
-            });
-          }
-        } else {
-          j.active = false;
-          j.phase = 'done';
-          j.cameraPanY = 0;
-          setJudgmentState({ ...j });
-          finishDuelInternal(j.isPlayerVictorious, j.verdict, j.isTrial);
-          return;
-        }
-      }
-      // If verdict is thumbs_down: Coup de Grâce Execution Cinematic Sequence
-      else {
-        j.cameraPanY = 0;
-
-        // Step 1: Hold the arena camera shot for an extended dramatic moment (from 11.5s to 13.2s)
-        if (elapsed < 13.2 && j.phase !== 'execution_walk' && j.phase !== 'execution_strike' && j.phase !== 'execution_settle') {
-          j.phase = 'post_pan_hold';
-          if (!j.audioTriggered.murmur) {
-            j.audioTriggered.murmur = true;
-            playJudgmentAudio('build');
-          }
-          if (Math.random() < 0.3) {
-            particlesRef.current.push({
-              x: 50 + Math.random() * (LOGIC_WIDTH - 100),
-              y: 90 + Math.random() * 65,
-              color: Math.random() < 0.6 ? PALETTE[1] : PALETTE[0],
-              vx: (Math.random() - 0.5) * 6,
-              vy: 2 + Math.random() * 4,
-              life: 0.85,
-              maxLife: 0.85,
-              size: 1,
-            });
-          }
-        }
-        // Initialize execution pathing at end of extended hold
-        else if (j.phase === 'post_pan_hold' || j.phase === 'pan_down') {
-          const livingCombatants = arenaFightersRef.current.filter((f) => f.hp > 0);
-          const downedCombatants = arenaFightersRef.current.filter((f) => f.hp <= 0);
-
-          if (downedCombatants.length > 0 && livingCombatants.length > 0) {
-            // Priority: target nearest downed player gladiator if one exists
-            const victim =
-              downedCombatants.find((f) => f.isPlayerTeam) ||
-              downedCombatants[0];
-
-            // Executioner: surviving enemy if player lost, or surviving gladiator if player won, or nearest living
-            let executioner = livingCombatants.find((f) => f.isPlayerTeam !== victim.isPlayerTeam);
-            if (!executioner) {
-              executioner = livingCombatants[0];
-            }
-
-            const standOffsetX = executioner.x < victim.x ? -13 : 13;
-            j.executionerId = executioner.id;
-            j.victimId = victim.id;
-            j.execStartX = executioner.x;
-            j.execStartY = executioner.y;
-            j.execTargetX = victim.x + standOffsetX;
-            j.execTargetY = victim.y - 1;
-            j.execTimer = 0;
-            j.phase = 'execution_walk';
-          } else {
-            // No combatants to execute; transition to results
-            j.active = false;
-            j.phase = 'done';
-            setJudgmentState({ ...j });
-            finishDuelInternal(j.isPlayerVictorious, j.verdict, j.isTrial);
-            return;
-          }
-        }
-        // Step 2: One of the living combatants actively paths and walks up to the nearest downed gladiator
-        else if (j.phase === 'execution_walk') {
-          j.execTimer = (j.execTimer || 0) + dt;
-          const execFighter = arenaFightersRef.current.find((f) => f.id === j.executionerId);
-          const victimFighter = arenaFightersRef.current.find((f) => f.id === j.victimId);
-
-          if (execFighter && victimFighter) {
-            execFighter.state = 'walking';
-            execFighter.flipX = victimFighter.x < execFighter.x;
-
-            const targetX = j.execTargetX ?? (victimFighter.x + 12);
-            const targetY = j.execTargetY ?? victimFighter.y;
-            const edx = targetX - execFighter.x;
-            const edy = targetY - execFighter.y;
-            const edist = Math.hypot(edx, edy);
-
-            if (edist > 3 && (j.execTimer || 0) < 3.0) {
-              const walkSpeed = 44;
-              execFighter.x += (edx / edist) * walkSpeed * dt;
-              execFighter.y += (edy / edist) * walkSpeed * dt;
-            } else {
-              // Arrived at downed fighter!
-              execFighter.x = targetX;
-              execFighter.y = targetY;
-              execFighter.state = 'idle';
-              execFighter.flipX = victimFighter.x < execFighter.x;
-              j.phase = 'execution_strike';
-              j.execTimer = 0;
-              j.execStrikeProgress = 0;
-            }
-          } else {
-            // Fallback if fighter missing
-            j.phase = 'execution_settle';
-            j.execTimer = 0;
-          }
-        }
-        // Step 3: Execution stance & downward sword thrust
-        else if (j.phase === 'execution_strike') {
-          j.execTimer = (j.execTimer || 0) + dt;
-          const timer = j.execTimer || 0;
-          const execFighter = arenaFightersRef.current.find((f) => f.id === j.executionerId);
-          const victimFighter = arenaFightersRef.current.find((f) => f.id === j.victimId);
-
-          if (execFighter && victimFighter) {
-            execFighter.state = 'idle';
-            execFighter.flipX = victimFighter.x < execFighter.x;
-
-            if (timer < 0.55) {
-              // * The standing executioner raises their sword/weapon upward by a few pixels into an execution stance.
-              j.execStrikeProgress = Math.min(0.49, timer / 1.1);
-            } else {
-              // * Thrusts the blade straight down into the sand behind the fallen body!
-              j.execStrikeProgress = 0.5 + Math.min(0.5, (timer - 0.55) / 0.16);
-
-              // Impact moment at ~0.65s
-              if (timer >= 0.65 && !j.audioTriggered.executionRoar) {
-                j.audioTriggered.executionRoar = true;
-
-                // * Trigger a sharp blood/sand spray pixel particle burst upon impact.
-                spawnBloodSpray(victimFighter.x, victimFighter.y, 28, -Math.PI / 2);
-                for (let i = 0; i < 22; i++) {
-                  const angle = -Math.PI / 2 + (Math.random() - 0.5) * 1.8;
-                  const speed = 35 + Math.random() * 55;
-                  particlesRef.current.push({
-                    x: victimFighter.x + (Math.random() - 0.5) * 8,
-                    y: victimFighter.y + 1,
-                    color: Math.random() < 0.6 ? PALETTE[1] : PALETTE[0],
-                    vx: Math.cos(angle) * speed,
-                    vy: Math.sin(angle) * speed,
-                    life: 0.85 + Math.random() * 0.45,
-                    maxLife: 1.3,
-                    size: 1 + (Math.random() > 0.5 ? 1 : 0),
-                  });
-                }
-
-                // * The arena crowd erupts into a thunderous bloodthirsty cheer (crowd_cheer.mp3 / amplified crowd roar SFX).
-                playJudgmentAudio('slash');
-                playJudgmentAudio('cheer');
-                gameAudio.playCrowdFatalBlow(5);
-                gameAudio.playMeleePunch();
-                gameAudio.playChiptuneExplosion();
-
-                spawnCrispPopup(victimFighter.x, victimFighter.y - 18, 'COUP DE GRÂCE!', '#9e4a42', true, true);
-                victimFighter.flashWhiteTimer = 0.45;
-              }
-            }
-          }
-
-          if (timer >= 1.05) {
-            j.phase = 'execution_settle';
-            j.execTimer = 0;
-          }
-        }
-        // Step 4: Pause for 1.5 seconds as the dust settles, before transitioning to the post-battle summary.
-        else if (j.phase === 'execution_settle') {
-          j.execTimer = (j.execTimer || 0) + dt;
-          const timer = j.execTimer || 0;
-
-          // Gently floating dust as it settles
-          if (Math.random() < 0.35) {
-            particlesRef.current.push({
-              x: 50 + Math.random() * (LOGIC_WIDTH - 100),
-              y: 90 + Math.random() * 65,
-              color: Math.random() < 0.6 ? PALETTE[1] : PALETTE[0],
-              vx: (Math.random() - 0.5) * 5,
-              vy: 2 + Math.random() * 3,
-              life: 0.9,
-              maxLife: 0.9,
-              size: 1,
-            });
-          }
-
-          if (timer >= 1.5) {
-            j.active = false;
-            j.phase = 'done';
-            j.cameraPanY = 0;
-            setJudgmentState({ ...j });
-            finishDuelInternal(j.isPlayerVictorious, j.verdict, j.isTrial);
-            return;
-          }
-        }
-      }
-
-      setJudgmentState({ ...j });
-      return; // Suspend combat logic during active Emperor's Judgment cinematic
-    }
-
-    // Update Floating Particles
-    particlesRef.current = particlesRef.current.filter((p) => {
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      if (p.isBlood) {
-        p.vy += 45 * dt; // Gravity on blood droplets
-      }
-      p.life -= dt;
-      return p.life > 0;
-    });
-
-    // Update Ethereal Sparks (Ghost Flash Easter Egg)
-    etherealSparksRef.current = etherealSparksRef.current.filter((s) => {
-      s.timer -= dt;
-      return s.timer > 0;
-    });
-
-    // Update Crisp Vector Popups
-    setCrispPopups((prev) =>
-      prev
-        .map((pop) => ({
-          ...pop,
-          life: pop.life - dt,
-          logicY: pop.logicY - 16 * dt, // Smooth vector float upward
-        }))
-        .filter((pop) => pop.life > 0),
-    );
-
-    if (modeRef.current === 'camp') {
-      // Rare ambient shooting star timer (500 - 1000s in camp skybox ONLY)
-      if (campShootingStarActiveDurationRef.current > 0) {
-        campShootingStarActiveDurationRef.current -= dt;
-      } else {
-        campShootingStarTimerRef.current -= dt;
-        if (campShootingStarTimerRef.current <= 0) {
-          campShootingStarActiveDurationRef.current = 1.4;
-          campShootingStarTimerRef.current = 500 + Math.random() * 500;
-        }
-      }
-
-      // Day/Night and Weather time progression
-      campTimeOfDayRef.current = ((campTimeOfDayRef.current || 0) + dt * 0.5) % 120;
-
-      // Update Active Camp Feast Sequence (30 - 40 seconds)
-      if (feastStateRef.current?.active) {
-        const fs = feastStateRef.current;
-        fs.timer -= dt;
-
-        // Fade in banquet table smoothly
-        if (fs.timer > fs.totalDuration - 2.5) {
-          fs.tableAlpha = Math.min(1, (fs.totalDuration - fs.timer) / 2.0);
-        } else if (fs.timer < 3.0) {
-          fs.tableAlpha = Math.max(0, fs.timer / 3.0);
-        } else {
-          fs.tableAlpha = 1.0;
-        }
-
-        // Feast Banter Dialogue Generation (fires every 3.5 - 5.5s)
-        fs.banterTimer -= dt;
-        if (fs.banterTimer <= 0) {
-          fs.banterTimer = 3.6 + Math.random() * 2.0;
-          const seatedGlads = gladiatorsRef.current.filter((g) => g.hp > 0 && g.state === 'sitting');
-          if (seatedGlads.length > 0 && campSpeechBubblesRef.current.length < 2) {
-            const speaker = seatedGlads[Math.floor(Math.random() * seatedGlads.length)];
-            let banterPool: string[] = [];
-
-            // Culture banter
-            if (FEAST_BANTER_BY_CULTURE[speaker.culture]) {
-              banterPool.push(...FEAST_BANTER_BY_CULTURE[speaker.culture]);
-            }
-            // Personality trait banter
-            if (speaker.traits) {
-              for (const tr of speaker.traits) {
-                if (FEAST_BANTER_BY_TRAIT[tr]) {
-                  banterPool.push(...FEAST_BANTER_BY_TRAIT[tr]);
-                }
-              }
-            }
-
-            if (banterPool.length === 0) {
-              banterPool = [
-                'Drink deep! Tonight we eat like kings!',
-                'To our brothers and the sands we conquered!',
-                'More wine! The night is young!',
-              ];
-            }
-
-            const chosenLine = banterPool[Math.floor(Math.random() * banterPool.length)];
-            campSpeechBubblesRef.current.push({
-              id: `feast_banter_${Date.now()}_${speaker.id}`,
-              gladiatorId: speaker.id,
-              speakerName: speaker.name.split(' ')[0],
-              text: chosenLine,
-              timer: 4.5,
-              maxDuration: 4.5,
-            });
-          }
-        }
-
-        // Update Slave NPCs bustling with platters
-        const updatedSlaves = feastSlavesRef.current.map((slave) => {
-          const s = { ...slave };
-          if (s.state === 'entering') {
-            const dx = s.targetX - s.x;
-            const dy = s.targetY - s.y;
-            const d = Math.hypot(dx, dy);
-            if (d > 2) {
-              s.x += (dx / d) * 32 * dt;
-              s.y += (dy / d) * 32 * dt;
-            } else {
-              s.state = 'serving';
-              s.targetX = s.x + (Math.random() > 0.5 ? 12 : -12);
-            }
-          } else if (s.state === 'serving') {
-            if (fs.timer < 4.0) {
-              s.state = 'departing';
-              s.targetY = 195;
-            } else {
-              // Gentle bustling around table
-              const dx = s.targetX - s.x;
-              if (Math.abs(dx) > 1) {
-                s.x += (dx > 0 ? 1 : -1) * 8 * dt;
-                s.flipX = dx < 0;
-              } else if (Math.random() < 0.05) {
-                s.targetX = 145 + Math.random() * 45;
-              }
-            }
-          } else if (s.state === 'departing') {
-            s.y += 32 * dt;
-          }
-          return s;
-        });
-        feastSlavesRef.current = updatedSlaves;
-        setFeastSlaves(updatedSlaves);
-
-        // Conclude feast after 35 seconds
-        if (fs.timer <= 0) {
-          fs.active = false;
-          feastStateRef.current = null;
-          setFeastState(null);
-          setFeastSlaves([]);
-          feastSlavesRef.current = [];
-          // Stand up gladiators
-          const stoodUp = gladiatorsRef.current.map((g) => ({
-            ...g,
-            state: 'idle' as const,
-            targetActivity: 'idle' as const,
-            actionTimer: 2.0,
-            seatedDuration: 0,
-            sitCooldown: 8.0,
-          }));
-          gladiatorsRef.current = stoodUp;
-          setGladiators(stoodUp);
-        } else {
-          setFeastState({ ...fs });
-        }
-      }
-
-      // 0. Update Zealous Devotee Camp Visitor
-      if (devoteeStateRef.current.active) {
-        const d = devoteeStateRef.current;
-        d.animTimer += dt;
-        if (d.speechTimer > 0) d.speechTimer -= dt;
-
-        if (d.state === 'entering') {
-          const dx = d.targetX - d.x;
-          const dy = d.targetY - d.y;
-          const dist = Math.hypot(dx, dy);
-          d.flipX = dx < 0;
-
-          if (dist > 3) {
-            const moveSpeed = 34;
-            d.x += (dx / dist) * moveSpeed * dt;
-            d.y += (dy / dist) * moveSpeed * dt;
-          } else {
-            d.x = d.targetX;
-            d.y = d.targetY;
-            d.state = 'cheering';
-            d.speechTimer = 6.0;
-
-            if (!d.hasGiftedGold) {
-              d.hasGiftedGold = true;
-              const giftGold = Math.round((15 + Math.floor(Math.random() * 11)) * 0.8); // 20% reduced devotee tribute
-              setGameState((prev) => ({ ...prev, gold: prev.gold + giftGold }));
-              gameAudio.playCoinPickup();
-              spawnCrispPopup(d.x, d.y - 18, `+${giftGold} Gold (Devotee Tribute)!`, '#fbbf24', true);
-              campSpeechBubblesRef.current.push({
-                id: `devotee_enter_${Date.now()}`,
-                gladiatorId: 'devotee_npc',
-                speakerName: 'Zealous Devotee',
-                text: 'By the gods, the greatest lanista in all antiquity! I pledge my devotion and tribute!',
-                timer: 4.8,
-                maxDuration: 4.8,
-              });
-            }
-          }
-          setDevoteeState({ ...d });
-        } else if (d.state === 'cheering') {
-          if (d.speechTimer <= 0) {
-            d.speechTimer = 10 + Math.random() * 10;
-            const cheerLines = [
-              'All hail our glorious champions!',
-              'Strike with fury, my heroes! Rome sings your names!',
-              'The sands shall remember our undefeated brotherhood!',
-              'I have sworn eternal fidelity to this ludus!',
-            ];
-            const cLine = cheerLines[Math.floor(Math.random() * cheerLines.length)];
-            campSpeechBubblesRef.current.push({
-              id: `devotee_cheer_${Date.now()}`,
-              gladiatorId: 'devotee_npc',
-              speakerName: 'Zealous Devotee',
-              text: cLine,
-              timer: 3.8,
-              maxDuration: 3.8,
-            });
-          }
-        } else if (d.state === 'leaving') {
-          const dx = d.targetX - d.x;
-          const dy = d.targetY - d.y;
-          const dist = Math.hypot(dx, dy);
-          d.flipX = dx < 0;
-
-          if (dist > 4) {
-            const moveSpeed = 36;
-            d.x += (dx / dist) * moveSpeed * dt;
-            d.y += (dy / dist) * moveSpeed * dt;
-            setDevoteeState({ ...d });
-          } else {
-            d.active = false;
-            setDevoteeState({ ...d });
-          }
-        }
-      }
-
-      // 0. Update Roman Civilian Courier Walking Physics & Arrival Sequence
-      if (courierNpcRef.current.active) {
-        const c = courierNpcRef.current;
-        c.animTimer += dt;
-        c.walkTimer += dt;
-        if (c.speechTimer > 0) c.speechTimer -= dt;
-
-        if (c.state === 'walking') {
-          const dx = c.targetX - c.x;
-          const dy = c.targetY - c.y;
-          const dist = Math.hypot(dx, dy);
-          c.flipX = dx < 0;
-
-          if (!c.hasPlayedHorn && c.walkTimer >= 0.2) {
-            c.hasPlayedHorn = true;
-            gameAudio.playHeraldTrumpet();
-          }
-
-          if (dist > 4) {
-            const moveSpeed = 38; // px / sec
-            c.x += (dx / dist) * moveSpeed * dt;
-            c.y += (dy / dist) * moveSpeed * dt;
-            setCourierNpcState({ ...c });
-          } else {
-            // Reached threshold right at the lower-left doorway entrance (x: 65, y: 83)!
-            c.x = c.targetX;
-            c.y = c.targetY;
-            c.state = 'at_tent';
-            setCourierNpcState({ ...c });
-            // Pause naturally right before the doorway, then cleanly transition before modal opens
-            setTimeout(() => {
-              courierNpcRef.current.active = false;
-              setCourierNpcState((prev) => ({ ...prev, active: false }));
-              closeAllCampModals();
-              setIsHeraldSummonsOpen(true);
-            }, 600);
-          }
-        } else if (c.state === 'at_tent') {
-          // If summons modal is closed, courier departs
-          if (!isHeraldSummonsOpenRef.current && c.walkTimer > 3.0) {
-            c.state = 'departing';
-            c.targetX = 330;
-            c.targetY = 192;
-            c.flipX = false;
-          }
-        } else if (c.state === 'departing') {
-          const dx = c.targetX - c.x;
-          const dy = c.targetY - c.y;
-          const dist = Math.hypot(dx, dy);
-          c.flipX = dx < 0;
-          if (dist > 4) {
-            const moveSpeed = 42;
-            c.x += (dx / dist) * moveSpeed * dt;
-            c.y += (dy / dist) * moveSpeed * dt;
-          } else {
-            c.active = false;
-          }
-          setCourierNpcState({ ...c });
-        }
-      }
-
-      // 0. Update Dynamic Camp Visitor Walking NPC (Walks to lower-left tent doorway to activate visitor modal)
-      if (visitorWalkingNpcRef.current?.active) {
-        const v = visitorWalkingNpcRef.current;
-        v.animTimer += dt;
-        v.walkTimer += dt;
-
-        if (v.state === 'walking') {
-          const dx = v.targetX - v.x;
-          const dy = v.targetY - v.y;
-          const dist = Math.hypot(dx, dy);
-          v.flipX = dx < 0;
-
-          if (dist > 3) {
-            const moveSpeed = v.visitor.type === 'rival' ? 36 : v.visitor.type === 'patron' ? 30 : 33;
-            v.x += (dx / dist) * moveSpeed * dt;
-            v.y += (dy / dist) * moveSpeed * dt;
-            setVisitorWalkingNpc({ ...v });
-          } else {
-            // Reached lower-left tent doorway entrance threshold (x: 45, y: 83)!
-            v.x = v.targetX;
-            v.y = v.targetY;
-            v.state = 'pausing_at_tent';
-            v.flipX = true; // face tent doorway
-
-            if (!v.hasSpoken) {
-              v.hasSpoken = true;
-              campSpeechBubblesRef.current.push({
-                id: `visitor_speech_${Date.now()}`,
-                gladiatorId: 'visitor_npc',
-                speakerName: v.visitor.name,
-                text: v.speechText,
-                timer: 3.2,
-                maxDuration: 3.2,
-              });
-              gameAudio.playFootstepStone();
-            }
-            setVisitorWalkingNpc({ ...v });
-          }
-        } else if (v.state === 'pausing_at_tent') {
-          v.pauseTimer -= dt;
-          if (v.pauseTimer <= 0) {
-            v.state = 'entering_tent';
-          }
-          setVisitorWalkingNpc({ ...v });
-        } else if (v.state === 'entering_tent') {
-          v.y -= 14 * dt;
-          if (v.y <= 74) {
-            // Entered the tent! Activate the visitor event modal and notify lanista!
-            v.active = false;
-            setVisitorWalkingNpc(null);
-            visitorWalkingNpcRef.current = null;
-            setCurrentVisitor(v.visitor);
-            setIsVisitorModalOpen(true);
-            gameAudio.playPowerupChime();
-          } else {
-            setVisitorWalkingNpc({ ...v });
-          }
-        }
-      }
-
-      // 0. Update Alexandrian Physician NPC Lifecycle, Pathing & Healing Aura (40 seconds)
-      if (physicianNpcRef.current.active) {
-        const p = physicianNpcRef.current;
-        p.animTimer += dt;
-        p.timer -= dt;
-
-        // Roaming & Pathing behavior: seeks wounded fighters
-        const livingGlads = gladiatorsRef.current.filter((g) => g.hp > 0 && !g.hidden);
-        const woundedGlads = livingGlads.filter((g) => g.hp < g.maxHp);
-
-        if (p.state === 'entering') {
-          const dx = p.targetX - p.x;
-          const dy = p.targetY - p.y;
-          const dist = Math.hypot(dx, dy);
-          p.flipX = dx < 0;
-          if (dist > 3) {
-            const speed = 36;
-            p.x += (dx / dist) * speed * dt;
-            p.y += (dy / dist) * speed * dt;
-          } else {
-            p.state = 'roaming';
-          }
-        } else if (p.state === 'roaming') {
-          if (p.timer <= 3.0) {
-            p.state = 'departing';
-            p.targetX = 18;
-            p.targetY = 110;
-          } else {
-            // Seek wounded fighters or stroll between gladiators
-            const dx = p.targetX - p.x;
-            const dy = p.targetY - p.y;
-            const dist = Math.hypot(dx, dy);
-            p.flipX = dx < 0;
-
-            if (dist > 4) {
-              const speed = 32;
-              p.x += (dx / dist) * speed * dt;
-              p.y += (dy / dist) * speed * dt;
-            } else {
-              // Pick new target location near a wounded gladiator or around courtyard
-              if (woundedGlads.length > 0) {
-                const sortedWounded = [...woundedGlads].sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp));
-                const targetWounded = sortedWounded[0];
-                p.targetX = Math.max(45, Math.min(285, targetWounded.x + (Math.random() > 0.5 ? 16 : -16)));
-                p.targetY = Math.max(95, Math.min(160, targetWounded.y + (Math.random() > 0.5 ? 8 : -8)));
-              } else if (livingGlads.length > 0) {
-                const randomGlad = livingGlads[Math.floor(Math.random() * livingGlads.length)];
-                p.targetX = Math.max(45, Math.min(285, randomGlad.x + (Math.random() > 0.5 ? 20 : -20)));
-                p.targetY = Math.max(95, Math.min(160, randomGlad.y + (Math.random() > 0.5 ? 10 : -10)));
-              } else {
-                p.targetX = 65 + Math.random() * 180;
-                p.targetY = 95 + Math.random() * 60;
-              }
-            }
-          }
-        } else if (p.state === 'departing') {
-          const dx = p.targetX - p.x;
-          const dy = p.targetY - p.y;
-          const dist = Math.hypot(dx, dy);
-          p.flipX = dx < 0;
-          if (dist > 3) {
-            const speed = 34;
-            p.x += (dx / dist) * speed * dt;
-            p.y += (dy / dist) * speed * dt;
-          }
-        }
-
-        // HEALING AURA: Every 1.0 second, any gladiator within healing radius (60 canvas units) whose HP < max HP receives +5 HP!
-        p.healTickTimer -= dt;
-        if (p.healTickTimer <= 0) {
-          p.healTickTimer = 1.0;
-          let anyHealed = false;
-
-          const updatedGlads = gladiatorsRef.current.map((g) => {
-            if (g.hp <= 0 || g.hidden) return g;
-            const distToDoc = Math.hypot(g.x - p.x, g.y - p.y);
-            if (distToDoc <= 60 && g.hp < g.maxHp) {
-              anyHealed = true;
-              const nextHp = Math.min(g.maxHp, g.hp + 5);
-              const wasLowHp = (g.hp / g.maxHp) < 0.35;
-
-              // Gentle green/gold cross healing particles emit from healed gladiators
-              for (let i = 0; i < 4; i++) {
-                particlesRef.current.push({
-                  x: g.x + (Math.random() - 0.5) * 8,
-                  y: g.y - 10 + (Math.random() - 0.5) * 6,
-                  color: Math.random() < 0.6 ? '#4ade80' : '#ded095',
-                  vx: (Math.random() - 0.5) * 6,
-                  vy: -12 - Math.random() * 8,
-                  life: 0.6,
-                  maxLife: 0.6,
-                  size: 2,
-                });
-              }
-
-              // Grateful reactive dialogue from gladiators being healed (chance per tick if not speaking)
-              if (
-                campSpeechBubblesRef.current.length < 2 &&
-                !campSpeechBubblesRef.current.some((b) => b.gladiatorId === g.id) &&
-                Math.random() < 0.35
-              ) {
-                let thankLine = '';
-                if (wasLowHp) {
-                  const lowLines = [
-                    'I thought I was bound for the underworld... thank you, healer.',
-                    'By the gods, I could feel the cold coming on. You pulled me back.',
-                    "Don't let them drag me to the corpse pit just yet!",
-                  ];
-                  thankLine = lowLines[Math.floor(Math.random() * lowLines.length)];
-                } else {
-                  const generalLines = [
-                    "Ah, the stinging means it's working.",
-                    'My shoulder moves again, praise Apollo.',
-                    'Good draught, herbalist.',
-                  ];
-                  thankLine = generalLines[Math.floor(Math.random() * generalLines.length)];
-                }
-
-                campSpeechBubblesRef.current.push({
-                  id: `healed_react_${Date.now()}_${g.id}`,
-                  gladiatorId: g.id,
-                  speakerName: g.name.split(' ')[0],
-                  text: thankLine,
-                  timer: 3.5,
-                  maxDuration: 3.5,
-                });
-              }
-
-              return { ...g, hp: nextHp };
-            }
-            return g;
-          });
-
-          if (anyHealed) {
-            gladiatorsRef.current = updatedGlads;
-            setGladiators(updatedGlads);
-          }
-        }
-
-        // RARE HUMOROUS INTERACTION (once per visit, ~8% chance between 12s and 28s remaining):
-        // "one person can very rarely randomly ask if he's a real doctor and he'll say no."
-        if (!p.didHumorCheck && p.timer <= 28.0 && p.timer >= 12.0) {
-          p.didHumorCheck = true;
-          if (Math.random() < 0.08) {
-            const nearbyGlads = livingGlads.filter((g) => Math.hypot(g.x - p.x, g.y - p.y) < 70);
-            const questioner = nearbyGlads.length > 0 ? nearbyGlads[0] : livingGlads[0];
-            if (questioner) {
-              campSpeechBubblesRef.current.push({
-                id: `humor_q_${Date.now()}`,
-                gladiatorId: questioner.id,
-                speakerName: questioner.name.split(' ')[0],
-                text: 'Wait... are you actually an ordained doctor?',
-                timer: 3.5,
-                maxDuration: 3.5,
-              });
-
-              setTimeout(() => {
-                const deadpanLines = [
-                  'No. Mostly I just sew sails and cauterize pigs.',
-                  "By Zeus, no. I used to be an undertaker's apprentice.",
-                ];
-                const deadpan = deadpanLines[Math.floor(Math.random() * deadpanLines.length)];
-                campSpeechBubblesRef.current.push({
-                  id: `humor_a_${Date.now()}`,
-                  gladiatorId: 'physician_npc',
-                  speakerName: 'Physician',
-                  text: deadpan,
-                  timer: 4.5,
-                  maxDuration: 4.5,
-                });
-              }, 2200);
-            }
-          }
-        }
-
-        // Physician Speech Bubbles (every 6-8s)
-        p.speechTimer -= dt;
-        if (p.speechTimer <= 0) {
-          p.speechTimer = 6.0 + Math.random() * 2.0;
-          if (campSpeechBubblesRef.current.length < 2) {
-            const docLines = [
-              'Hold still, let the willow bark draw the fever out.',
-              'Clean linen and sharp steel—that’s how we save limbs!',
-              'Breathe deep of this smoke, it numbs the torn sinew.',
-              'The sand takes blood, but my tinctures give it back.',
-            ];
-            const chosenDocLine = docLines[Math.floor(Math.random() * docLines.length)];
-            campSpeechBubblesRef.current.push({
-              id: `physician_speak_${Date.now()}`,
-              gladiatorId: 'physician_npc',
-              speakerName: 'Physician',
-              text: chosenDocLine,
-              timer: 4.0,
-              maxDuration: 4.0,
-            });
-          }
-        }
-
-        // Conclude after 40 seconds
-        if (p.timer <= 0) {
-          p.active = false;
-          campSpeechBubblesRef.current.push({
-            id: `physician_depart_${Date.now()}`,
-            gladiatorId: 'physician_npc',
-            speakerName: 'Physician',
-            text: 'My herbs are spent for now. Fight well, champions of the sand!',
-            timer: 3.5,
-            maxDuration: 3.5,
-          });
-        }
-        setPhysicianNpc({ ...p });
-      }
-
-      // 0. Update Traveling Nomad Merchant State Machine & Walking Physics
-      if (merchantStateRef.current.active) {
-        const m = merchantStateRef.current;
-        m.animTimer += dt;
-
-        if (m.state === 'entering') {
-          const dx = m.targetX - m.x;
-          const dy = m.targetY - m.y;
-          const dist = Math.hypot(dx, dy);
-
-          m.flipX = dx < 0;
-
-          if (dist > 3) {
-            const moveSpeed = 30; // logic pixels per sec
-            m.x += (dx / dist) * moveSpeed * dt;
-            m.y += (dy / dist) * moveSpeed * dt;
-          } else {
-            // Arrived at sitting spot
-            m.x = m.targetX;
-            m.y = m.targetY;
-            m.state = 'sitting';
-            m.sitTimer = 25.0; // Sits for ~25s
-            if (!m.hasPlayedSitSpeech) {
-              m.hasPlayedSitSpeech = true;
-              campSpeechBubblesRef.current.push({
-                id: `merchant_sit_${Date.now()}`,
-                gladiatorId: 'merchant_npc',
-                speakerName: 'Nomad Merchant',
-                text: 'Exotic wares from the Eastern deserts! Trade with the caravan!',
-                timer: 4.5,
-                maxDuration: 4.5,
-              });
-              gameAudio.playPowerupChime();
-            }
-          }
-          setMerchantState({ ...m });
-        } else if (m.state === 'sitting') {
-          m.sitTimer -= dt;
-          if (m.sitTimer <= 0) {
-            m.state = 'leaving';
-            m.targetX = 335;
-            m.targetY = 115;
-            if (!m.hasPlayedDepartSpeech) {
-              m.hasPlayedDepartSpeech = true;
-              campSpeechBubblesRef.current.push({
-                id: `merchant_leave_${Date.now()}`,
-                gladiatorId: 'merchant_npc',
-                speakerName: 'Nomad Merchant',
-                text: 'The dunes beckon my caravan forward. Farewell, Dominus!',
-                timer: 3.5,
-                maxDuration: 3.5,
-              });
-            }
-          }
-          setMerchantState({ ...m });
-        } else if (m.state === 'leaving') {
-          const dx = m.targetX - m.x;
-          const dy = m.targetY - m.y;
-          const dist = Math.hypot(dx, dy);
-
-          m.flipX = dx < 0;
-
-          if (dist > 4) {
-            const moveSpeed = 32;
-            m.x += (dx / dist) * moveSpeed * dt;
-            m.y += (dy / dist) * moveSpeed * dt;
-          } else {
-            m.active = false;
-            setArmoryTab((tab) => (tab === 'bazaar' ? 'armoria' : tab));
-          }
-          setMerchantState({ ...m });
-        }
-      }
-
-      // Update gladiator equip exit particle effect timers
-      for (const glad of gladiatorsRef.current) {
-        if (glad.equipParticleTimer && glad.equipParticleTimer > 0) {
-          glad.equipParticleTimer -= dt;
-          if (glad.equipParticleTimer <= 0) {
-            glad.equipParticleTimer = 0;
-            glad.justEquipped = false;
-          }
-        }
-      }
-
-      // Check if returning from first victory to initiate post-battle onboarding
-      if (
-        firstBattleDoneRef.current &&
-        (postBattleStageRef.current === 'none' || pendingPostBattleTutorialRef.current)
-      ) {
-        pendingPostBattleTutorialRef.current = false;
-        setPostBattleStage('recruits_dialogue_1');
-        postBattleStageRef.current = 'recruits_dialogue_1';
-        postTutCharCountRef.current = 0;
-        postTutCharTimerRef.current = 0;
-        postTutIsLineDoneRef.current = false;
-        postBattleTimerRef.current = 0;
-        sparkleTimerRef.current = 5.0;
-        gameAudio.playPowerupChime();
-      }
-
-      // Sparkle shine particles over camp courtyard
-      if (sparkleTimerRef.current > 0) {
-        sparkleTimerRef.current -= dt;
-        if (Math.random() < 0.45) {
-          const sx = 35 + Math.random() * (LOGIC_WIDTH - 70);
-          const sy = 84 + Math.random() * 76;
-          particlesRef.current.push({
-            x: sx,
-            y: sy,
-            color: Math.random() < 0.6 ? PALETTE[0] : PALETTE[15],
-            vx: (Math.random() - 0.5) * 8,
-            vy: -10 - Math.random() * 12,
-            life: 0.8 + Math.random() * 0.4,
-            maxLife: 1.2,
-            size: 2,
-          });
-        }
-      }
-
-      // 1. Initial Tutorial Sequence State Machine
-      const curTutStage = tutorialStageRef.current;
-      if (curTutStage === 'idle') {
-        tutorialIdleTimerRef.current += dt;
-        if (tutorialIdleTimerRef.current >= 1.0) {
-          // Wait 1.0 second, then first gladiator displays ambient speech bubble:
-          // "Master... I've been on the wine."
-          setTutorialStage('wine_speech');
-          tutorialStageRef.current = 'wine_speech';
-          tutorialWineTimerRef.current = 0;
-          const firstGlad = gladiatorsRef.current[0];
-          if (firstGlad) {
-            campSpeechBubblesRef.current = [
-              {
-                id: 'tut_wine_bubble',
-                gladiatorId: firstGlad.id,
-                speakerName: firstGlad.name.split(' ')[0],
-                text: "Master... I've been on the wine.",
-                timer: 3.0,
-                maxDuration: 3.0,
-              },
-            ];
-          }
-        }
-      } else if (curTutStage === 'wine_speech') {
-        tutorialWineTimerRef.current += dt;
-        if (tutorialWineTimerRef.current >= 2.5) {
-          advanceTutorial();
-        }
-      }
-
-      const curPostStage = postBattleStageRef.current;
-      const isAnyCampModalOpen =
-        isGameMenuOpenRef.current ||
-        isHowToPlayOpenRef.current ||
-        isHeraldSummonsOpenRef.current ||
-        isTrialBellModalOpenRef.current ||
-        isBattlesModalOpenRef.current ||
-        deploymentTierRef.current !== null ||
-        isArmoryModalOpenRef.current ||
-        isRosterModalOpenRef.current ||
-        isBondingModalOpenRef.current ||
-        isQuestBoardOpenRef.current ||
-        activeQuestNodeRef.current !== null ||
-        questResolutionRef.current !== null ||
-        storyStateRef.current.phase !== 'inactive' ||
-        (keeperSequenceRef.current?.active ?? false) ||
-        heroArrivalModalRef.current !== null;
-
-      // Post-battle active camp time: ticks 5 seconds only when no modal/menu is open
-      if (curPostStage === 'courtyard_zoom' && !isAnyCampModalOpen) {
-        postBattleTimerRef.current += dt;
-        if (postBattleTimerRef.current >= 5.0) {
-          setPostBattleStage('dummy_spotlight_1');
-          postBattleStageRef.current = 'dummy_spotlight_1';
-          postTutCharCountRef.current = 0;
-          postTutCharTimerRef.current = 0;
-          postTutIsLineDoneRef.current = false;
-          gameAudio.playPowerupChime();
-        }
-      }
-
-      // 2. Camera & Spotlight Target Interpolation
-      let targetCamX = LOGIC_WIDTH / 2;
-      let targetCamY = LOGIC_HEIGHT / 2;
-      let targetCamZoom = 1.0;
-      let targetDimAlpha = 0.0;
-      let targetSpotRadius = 0;
-      let targetSpotX = 64;
-      let targetSpotY = 78;
-
-      if (curTutStage === 'spotlight_tent') {
-        targetCamX = 64;
-        targetCamY = 78;
-        targetCamZoom = 1.15;
-        targetDimAlpha = 0.75;
-        targetSpotRadius = 36;
-        targetSpotX = 64;
-        targetSpotY = 78;
-      } else if (curTutStage === 'spotlight_armory') {
-        targetCamX = 175;
-        targetCamY = 84;
-        targetCamZoom = 1.15;
-        targetDimAlpha = 0.75;
-        targetSpotRadius = 34;
-        targetSpotX = 175;
-        targetSpotY = 84;
-      } else if (curTutStage === 'call_warning') {
-        targetCamX = LOGIC_WIDTH / 2;
-        targetCamY = LOGIC_HEIGHT / 2;
-        targetCamZoom = 1.0;
-        targetDimAlpha = 0.35; // pulls zoom back to 1.0x and fades dimness slightly
-        targetSpotRadius = 0;
-      } else if (curPostStage === 'courtyard_zoom') {
-        // While waiting the 5-second countdown in camp (outside menus), the camera stays in normal / gentle overview perspective
-        targetCamX = LOGIC_WIDTH / 2;
-        targetCamY = LOGIC_HEIGHT / 2;
-        targetCamZoom = 1.0;
-        targetDimAlpha = 0.0;
-        targetSpotRadius = 0;
-      } else if (curPostStage === 'dummy_spotlight_1' || curPostStage === 'dummy_spotlight_2') {
-        // The camera zoom-in directly toward the MANIKIN (scale: 1.18, centered on the manikin coordinates)
-        // occurs EXACTLY when the 5-second timer completes, in lockstep with the spotlight dimming and typewriter dialogue trigger!
-        targetCamX = 237;
-        targetCamY = 86;
-        targetCamZoom = 1.18;
-        targetDimAlpha = 0.75;
-        targetSpotRadius = 32;
-        targetSpotX = 237;
-        targetSpotY = 86;
-      } else if (curPostStage === 'tent_spotlight') {
-        // Precisely center the spotlight on the TENT (x: 75, y: 70)
-        targetCamX = 75;
-        targetCamY = 70;
-        targetCamZoom = 1.18;
-        targetDimAlpha = 0.75;
-        targetSpotRadius = 36;
-        targetSpotX = 75;
-        targetSpotY = 70;
-      } else if (keeperSequenceRef.current && keeperSequenceRef.current.active) {
-        // Post-Fifth Podium Narrative Dialogue Sequence: Dimmed screen, strictly NO zoom!
-        targetCamX = LOGIC_WIDTH / 2;
-        targetCamY = LOGIC_HEIGHT / 2;
-        targetCamZoom = 1.0;
-        targetDimAlpha = 0.75;
-        targetSpotRadius = 0;
-      } else if (isFeastOfferPendingRef.current) {
-        // Third Pedestal Victory Return: Dimmed screen for special Lanista feast offer!
-        targetCamX = LOGIC_WIDTH / 2;
-        targetCamY = LOGIC_HEIGHT / 2;
-        targetCamZoom = 1.0;
-        targetDimAlpha = 0.75;
-        targetSpotRadius = 0;
-      }
-
-      const lerpSpd = dt * 4.5;
-      camZoomRef.current += (targetCamZoom - camZoomRef.current) * Math.min(1, lerpSpd);
-      camXRef.current += (targetCamX - camXRef.current) * Math.min(1, lerpSpd);
-      camYRef.current += (targetCamY - camYRef.current) * Math.min(1, lerpSpd);
-      dimAlphaRef.current += (targetDimAlpha - dimAlphaRef.current) * Math.min(1, dt * 5.0);
-      spotRadiusRef.current += (targetSpotRadius - spotRadiusRef.current) * Math.min(1, dt * 4.0);
-      spotXRef.current += (targetSpotX - spotXRef.current) * Math.min(1, lerpSpd);
-      spotYRef.current += (targetSpotY - spotYRef.current) * Math.min(1, lerpSpd);
-
-      // 3. Typewriter Text Step for Tutorial Dialogues
-      if (
-        curTutStage === 'spotlight_tent' ||
-        curTutStage === 'spotlight_armory' ||
-        curTutStage === 'call_warning'
-      ) {
-        const textTarget =
-          curTutStage === 'spotlight_tent'
-            ? TUTORIAL_TEXT_TENT
-            : curTutStage === 'spotlight_armory'
-              ? TUTORIAL_TEXT_ARMORY
-              : TUTORIAL_TEXT_WARNING;
-
-        if (!tutIsLineDoneRef.current) {
-          tutCharTimerRef.current += dt;
-          const charInterval = 0.032;
-          while (
-            tutCharTimerRef.current >= charInterval &&
-            tutCharCountRef.current < textTarget.length
-          ) {
-            tutCharTimerRef.current -= charInterval;
-            tutCharCountRef.current += 1;
-            const ch = textTarget[tutCharCountRef.current - 1];
-            if (ch && ch !== ' ' && ch !== '.' && ch !== ',') {
-              const pitch = (ch.charCodeAt(0) % 5) - 2;
-              gameAudio.playTypewriterBeep(pitch);
-            }
-          }
-          if (tutCharCountRef.current >= textTarget.length) {
-            tutIsLineDoneRef.current = true;
-          }
-        }
-      }
-
-      // 4. Typewriter Text Step for Post-Battle Dialogue
-      const curPost = postBattleStageRef.current;
-      if (
-        curPost === 'recruits_dialogue_1' ||
-        curPost === 'recruits_dialogue_2' ||
-        curPost === 'dummy_spotlight_1' ||
-        curPost === 'dummy_spotlight_2' ||
-        curPost === 'tent_spotlight'
-      ) {
-        const postTextTarget =
-          curPost === 'recruits_dialogue_1'
-            ? POST_BATTLE_TEXT_1
-            : curPost === 'recruits_dialogue_2'
-              ? POST_BATTLE_TEXT_2
-              : curPost === 'dummy_spotlight_1'
-                ? DUMMY_TEXT_1
-                : curPost === 'dummy_spotlight_2'
-                  ? DUMMY_TEXT_2
-                  : POST_BATTLE_TENT_TEXT;
-
-        if (!postTutIsLineDoneRef.current) {
-          postTutCharTimerRef.current += dt;
-          const charInterval = 0.032;
-          while (
-            postTutCharTimerRef.current >= charInterval &&
-            postTutCharCountRef.current < postTextTarget.length
-          ) {
-            postTutCharTimerRef.current -= charInterval;
-            postTutCharCountRef.current += 1;
-            const ch = postTextTarget[postTutCharCountRef.current - 1];
-            if (ch && ch !== ' ' && ch !== '.' && ch !== ',') {
-              const pitch = (ch.charCodeAt(0) % 5) - 2;
-              gameAudio.playTypewriterBeep(pitch);
-            }
-          }
-          if (postTutCharCountRef.current >= postTextTarget.length) {
-            postTutIsLineDoneRef.current = true;
-          }
-        }
-      }
-
-      // 5. Typewriter Text Step for Keeper Post-Fifth Sequence
-      if (keeperSequenceRef.current && keeperSequenceRef.current.active) {
-        const ks = keeperSequenceRef.current;
-        const curText = KEEPER_POST_FIFTH_PANELS[ks.panelIndex];
-        if (!ks.isDone) {
-          ks.charTimer = (ks.charTimer || 0) + dt;
-          const charInterval = 0.032;
-          while (ks.charTimer >= charInterval && ks.charCount < curText.length) {
-            ks.charTimer -= charInterval;
-            ks.charCount += 1;
-            const ch = curText[ks.charCount - 1];
-            if (ch && ch !== ' ' && ch !== '.' && ch !== ',') {
-              gameAudio.playTypewriterBeep((ch.charCodeAt(0) % 5) - 2);
-            }
-          }
-          if (ks.charCount >= curText.length) {
-            ks.isDone = true;
-          }
-          setKeeperSequence({ ...ks });
-        }
-      }
-
-      // 5.5 Typewriter Text Step for Feast Offer Dialogue Box
-      if (isFeastOfferPendingRef.current) {
-        const feastText = "These men should eat like kings.";
-        if (!tutIsLineDoneRef.current) {
-          tutCharTimerRef.current += dt;
-          const charInterval = 0.035;
-          while (tutCharTimerRef.current >= charInterval && tutCharCountRef.current < feastText.length) {
-            tutCharTimerRef.current -= charInterval;
-            tutCharCountRef.current += 1;
-            const ch = feastText[tutCharCountRef.current - 1];
-            if (ch && ch !== ' ' && ch !== '.' && ch !== ',') {
-              gameAudio.playTypewriterBeep((ch.charCodeAt(0) % 5) - 2);
-            }
-          }
-          if (tutCharCountRef.current >= feastText.length) {
-            tutIsLineDoneRef.current = true;
-          }
-        }
-      }
-
-      // 6. Typewriter Text Step for Hero Arrival Tale Modal
-      if (heroArrivalModalRef.current && !heroArrivalModalRef.current.isDone) {
-        const ham = heroArrivalModalRef.current;
-        ham.charTimer = (ham.charTimer || 0) + dt;
-        const charInterval = 0.028;
-        while (ham.charTimer >= charInterval && ham.charCount < ham.tale.length) {
-          ham.charTimer -= charInterval;
-          ham.charCount += 1;
-          const ch = ham.tale[ham.charCount - 1];
-          if (ch && ch !== ' ' && ch !== '.' && ch !== ',') {
-            gameAudio.playTypewriterBeep((ch.charCodeAt(0) % 5) - 2);
-          }
-        }
-        if (ham.charCount >= ham.tale.length) {
-          ham.isDone = true;
-        }
-        setHeroArrivalModal({ ...ham });
-      }
-
-      const isAnyModalOrNoticeActive =
-        isGameMenuOpenRef.current ||
-        isHowToPlayOpenRef.current ||
-        isHeraldSummonsOpenRef.current ||
-        isTrialBellModalOpenRef.current ||
-        isBattlesModalOpenRef.current ||
-        deploymentTierRef.current !== null ||
-        isArmoryModalOpenRef.current ||
-        isRosterModalOpenRef.current ||
-        isBondingModalOpenRef.current ||
-        isQuestBoardOpenRef.current ||
-        activeQuestNodeRef.current !== null ||
-        questResolutionRef.current !== null ||
-        isUpgradesModalOpen ||
-        isBreedingModalOpen ||
-        isVisitorModalOpen ||
-        isManagerMenuOpen ||
-        isDebugMenuOpen ||
-        isEmperorDuelModalOpen ||
-        isBanditAlarmOpen ||
-        pepTalkState !== null ||
-        modeRef.current !== 'camp' ||
-        tutorialStageRef.current !== 'done' ||
-        (postBattleStageRef.current !== 'none' && postBattleStageRef.current !== 'done') ||
-        (keeperSequenceRef.current?.active ?? false) ||
-        heroArrivalModalRef.current !== null ||
-        gameStateRef.current.status !== 'PLAYING';
-
-      // Update Active Quest Expeditions countdown (STRICTLY PAUSED when ANY modal or menu is open in camp)
-      if (activeExpeditionsRef.current.length > 0 && !isAnyCampModalOpen && !isAnyModalOrNoticeActive) {
-        const remainingExpeditions: ActiveQuestExpedition[] = [];
-        const toResolve: ActiveQuestExpedition[] = [];
-
-        for (const exp of activeExpeditionsRef.current) {
-          const rem = exp.remainingTime - dt;
-          if (rem <= 0) {
-            toResolve.push({ ...exp, remainingTime: 0 });
-          } else {
-            remainingExpeditions.push({ ...exp, remainingTime: rem });
-          }
-        }
-
-        activeExpeditionsRef.current = remainingExpeditions;
-        setActiveExpeditions(remainingExpeditions);
-
-        for (const exp of toResolve) {
-          resolveExpedition(exp);
-        }
-      }
-
-      // Random courier visits in camp (every 50-80s)
-      if (!isAnyModalOrNoticeActive && storyStateRef.current.phase === 'inactive' && !courierNotice) {
-        courierTimerRef.current -= dt;
-        if (courierTimerRef.current <= 0) {
-          courierTimerRef.current = 50 + Math.random() * 30;
-          const availableChains = QUEST_CHAINS.filter(
-            (c) => unlockedChains.includes(c.id),
-          );
-          if (availableChains.length > 0) {
-            const picked = availableChains[Math.floor(Math.random() * availableChains.length)];
-            setCourierNotice({
-              chainId: picked.id,
-              speaker: picked.speaker,
-              title: picked.title,
-              nodeId: picked.startNodeId,
-            });
-            gameAudio.playHoverMicroTone();
-          }
-        }
-      }
-
-      // Dynamic Camp Visitors (Merchants, Scouts, Patrons, Rivals)
-      // When ready, visitor NPC walks from bottom entrance towards tent entrance (x: 75, y: 72)
-      if (!isAnyModalOrNoticeActive && storyStateRef.current.phase === 'inactive' && !currentVisitor && !visitorWalkingNpcRef.current?.active) {
-        visitorTimerRef.current -= dt;
-        if (visitorTimerRef.current <= 0) {
-          visitorTimerRef.current = 45 + Math.random() * 30;
-          const vTypes: ('merchant' | 'scout' | 'patron' | 'rival')[] = ['merchant', 'scout', 'patron', 'rival'];
-          const vType = vTypes[Math.floor(Math.random() * vTypes.length)];
-
-          let visitor: DynamicVisitor;
-          let characteristicSpeech = '';
-
-          if (vType === 'merchant') {
-            visitor = {
-              id: `visitor_${Date.now()}`,
-              type: 'merchant',
-              name: 'Apothecary Septimus',
-              title: 'Traveling Alchemist',
-              greeting: 'Rare draughts distilled from Numidian herbs and dragon marrow, lanista!',
-              offerText: "Lion's Blood Tonic: +3 STR permanently to all living fighters (110 Gold).",
-              cost: 110,
-              attributeBoost: { type: 'str', val: 3, name: "Lion's Blood Tonic" },
-              timer: 30.0,
-            };
-            characteristicSpeech = 'I bring exotic draughts from Alexandria!';
-          } else if (vType === 'scout') {
-            const cultures: Culture[] = ['roman', 'celt', 'berber', 'scythian', 'hunnic'];
-            const pickedCult = cultures[Math.floor(Math.random() * cultures.length)];
-            const recruitTmpl = INITIAL_GLADIATORS.find((g) => g.culture === pickedCult) || INITIAL_GLADIATORS[0];
-            visitor = {
-              id: `visitor_${Date.now()}`,
-              type: 'scout',
-              name: 'Lucius the Slave Trader',
-              title: 'Prodigy Scout',
-              greeting: 'I discovered a prodigy fighter in the provinces with rare raw genetics!',
-              offerText: `Purchase high-potential recruit ${recruitTmpl.name.split(' ')[0]} with elevated base stats (130 Gold).`,
-              cost: 130,
-              scoutRecruit: {
-                ...recruitTmpl,
-                id: `scout_${pickedCult}_${Date.now()}`,
-                name: `Prodigy ${recruitTmpl.name.split(' ')[0]}`,
-                title: 'Scouted Prodigy',
-                level: 2,
-                baseAttack: recruitTmpl.attack + 5,
-                baseDefense: recruitTmpl.defense + 3,
-                attack: recruitTmpl.attack + 5,
-                defense: recruitTmpl.defense + 3,
-                attributes: { str: 16, dex: 15, vit: 15, con: 15, wil: 15 },
-                traits: ['Resilient', 'Proud'],
-              },
-              timer: 30.0,
-            };
-            characteristicSpeech = 'New flesh from the northern borders, Lanista!';
-          } else if (vType === 'patron') {
-            visitor = {
-              id: `visitor_${Date.now()}`,
-              type: 'patron',
-              name: 'Senator Gracchus',
-              title: 'Wealthy Patrician Patron',
-              greeting: 'Your champions bring honor to the games! Take this purse to sponsor their training.',
-              offerText: 'Accept a generous political gift (+140 Gold).',
-              reward: 140,
-              rewardText: '+140 Gold Gift',
-              timer: 30.0,
-            };
-            characteristicSpeech = 'A private wager for your finest swords!';
-          } else {
-            visitor = {
-              id: `visitor_${Date.now()}`,
-              type: 'rival',
-              name: 'Lanista Tullius',
-              title: 'Rival Ludus Master',
-              greeting: 'They chant your name, but my fighters could snap your men like twigs! Care to wager?',
-              offerText: 'Place 120G underground wager on your next battle victory for 300G return!',
-              cost: 120,
-              reward: 300,
-              rewardText: 'Underground Wager (Win next match for 300G!)',
-              timer: 30.0,
-            };
-            characteristicSpeech = 'Think your champions can match my legion?';
-          }
-
-          // Spawn unique walking visitor NPC moving toward lower-left tent doorway
-          visitorWalkingNpcRef.current = {
-            active: true,
-            visitor,
-            x: 165,
-            y: 192,
-            targetX: 45,
-            targetY: 83,
-            state: 'walking',
-            pauseTimer: 2.2,
-            speechText: characteristicSpeech,
-            hasSpoken: false,
-            animTimer: 0,
-            flipX: true,
-            walkTimer: 0,
-          };
-          setVisitorWalkingNpc({ ...visitorWalkingNpcRef.current });
-        }
-      }
-
-      // Scheduled Auto-Call Fights (Every 30 - 120s normal interval, or 7.5s after tutorial)
-      // Strictly PAUSED while tutorial, post-battle dialogue, story, or modal is active
-      if (!isAnyModalOrNoticeActive && storyStateRef.current.phase === 'inactive' && tutorialStageRef.current === 'done') {
-        heraldTimerRef.current -= dt;
-        if (heraldTimerRef.current <= 0 && !courierNpcRef.current.active) {
-          const baseDelay = firstBattleDoneRef.current
-            ? 30 + Math.random() * 90 // 30 to 120 seconds interval
-            : 35;
-          heraldTimerRef.current = baseDelay * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
-          // Spawn Roman Civilian Courier walking up from bottom of camp to the lower-left tent doorway!
-          courierNpcRef.current = {
-            active: true,
-            x: 165,
-            y: 192,
-            targetX: 45,
-            targetY: 83,
-            state: 'walking',
-            speechTimer: 5.0,
-            speechText: 'A decree from Rome! The Emperor summons your gladiators!',
-            walkTimer: 0,
-            animTimer: 0,
-            flipX: true,
-            hasPlayedHorn: false,
-          };
-          setCourierNpcState({ ...courierNpcRef.current });
-        }
-      }
-
-      // 0. CINEMATIC STORY DIALOGUE EVENT SYSTEM
-      if (storyStateRef.current.phase !== 'inactive') {
-        // Pause/silence ambient camp speech bubbles
-        campSpeechBubblesRef.current = [];
-
-        const st = {...storyStateRef.current};
-        st.phaseTimer += dt;
-
-        if (st.phase === 'bar_rising') {
-          // 1) Speech bar rises up from bottom, stopping just above bottom margin
-          // Duration: 0.45s for bar rise
-          st.barRiseProgress = Math.min(1, st.phaseTimer / 0.45);
-
-          // 3) After a 0.2 second pause while the bar is hovering up, rest of background dims noticeably
-          if (st.phaseTimer >= 0.2) {
-            const dimElapsed = st.phaseTimer - 0.2;
-            st.bgDimmerAlpha = Math.min(1, dimElapsed / 0.3);
-          }
-
-          if (st.phaseTimer >= 0.55) {
-            st.barRiseProgress = 1;
-            st.bgDimmerAlpha = 1;
-            st.phase = 'portrait_fading_in';
-            st.phaseTimer = 0;
-            st.portraitColorAlpha = 0;
-          }
-        } else if (st.phase === 'portrait_fading_in') {
-          // 4) Full-color 32x32 portrait fades in smoothly in the exact spot of the black silhouette
-          st.portraitColorAlpha = Math.min(1, st.phaseTimer / 0.35);
-
-          if (st.phaseTimer >= 0.38) {
-            st.portraitColorAlpha = 1;
-            st.phase = 'typing';
-            st.phaseTimer = 0;
-            st.typedCharCount = 0;
-            st.charTimer = 0;
-          }
-        } else if (st.phase === 'typing') {
-          // 6) Story text types out letter-by-letter with subtle synth beep
-          const currentLine = st.event?.lines[st.currentLineIndex] || '';
-          const charInterval = st.isSpeedingUp ? 0.008 : 0.034;
-          st.charTimer += dt;
-
-          while (st.charTimer >= charInterval && st.typedCharCount < currentLine.length) {
-            st.charTimer -= charInterval;
-            st.typedCharCount += 1;
-            const ch = currentLine[st.typedCharCount - 1];
-            if (ch && ch !== ' ' && ch !== '.' && ch !== ',') {
-              const pitchOffset = (ch.charCodeAt(0) % 5) - 2;
-              gameAudio.playTypewriterBeep(pitchOffset);
-            }
-          }
-
-          if (st.typedCharCount >= currentLine.length) {
-            st.phase = 'line_ready';
-            st.phaseTimer = 0;
-          }
-        } else if (st.phase === 'line_ready') {
-          // Awaiting Space key, tap, or click on speech bar
-        } else if (st.phase === 'closing_fade') {
-          // Closing animation in reverse order: text and lit portrait fade out -> black silhouette briefly
-          st.portraitColorAlpha = Math.max(0, 1 - st.phaseTimer / 0.22);
-          if (st.phaseTimer >= 0.24) {
-            st.portraitColorAlpha = 0;
-            st.phase = 'closing_bar_lowering';
-            st.phaseTimer = 0;
-          }
-        } else if (st.phase === 'closing_bar_lowering') {
-          // Background returns to normal brightness -> speech bar lowers back down off bottom edge
-          st.bgDimmerAlpha = Math.max(0, 1 - st.phaseTimer / 0.26);
-          st.barRiseProgress = Math.max(0, 1 - st.phaseTimer / 0.26);
-
-          if (st.phaseTimer >= 0.28) {
-            // Clean complete reset of all story state variables
-            st.phase = 'inactive';
-            st.barRiseProgress = 0;
-            st.bgDimmerAlpha = 0;
-            st.portraitColorAlpha = 0;
-            st.event = null;
-            st.currentLineIndex = 0;
-            st.typedCharCount = 0;
-            st.charTimer = 0;
-            st.phaseTimer = 0;
-            st.isSpeedingUp = false;
-            // Cooldown reset: Every 40 - 60 seconds
-            storyCooldownRef.current = 40 + Math.random() * 20;
-          }
-        }
-
-        storyStateRef.current = st;
-        setStoryState(st);
-      } else {
-        // Decrement story event timer (Every 40 - 60 seconds in camp view)
-        // Strictly PAUSED whenever Coliseum Summons notice or ANY modal is open!
-        if (!isAnyModalOrNoticeActive) {
-          storyCooldownRef.current -= dt;
-          if (storyCooldownRef.current <= 0) {
-            triggerStoryEvent();
-          }
-        }
-      }
-
-      // CAMP PHASE: 5 cultural gladiators roam, spar at dummy (+XP), rest near tent (+HP)
-
-      // 1. Ambient Camp Speech Bubbles update
-      campSpeechBubblesRef.current = campSpeechBubblesRef.current.filter((b) => {
-        b.timer -= dt;
-        return b.timer > 0;
-      });
-
-      // 2. Decrement speech cooldowns & trigger ambient speech bubbles (after tutorial)
-      if (storyStateRef.current.phase === 'inactive' && tutorialStageRef.current === 'done') {
-        for (const glad of gladiatorsRef.current) {
-          if (glad.hp <= 0) continue;
-
-          const currentCd = gladiatorSpeechCooldownsRef.current[glad.id] ?? 12;
-          const newCd = currentCd - dt;
-          gladiatorSpeechCooldownsRef.current[glad.id] = newCd;
-
-          if (newCd <= 0) {
-            // Concurrency limit: Strictly NO MORE than 2 speech bubbles ever active at the same time in camp
-            const activeBubbles = campSpeechBubblesRef.current;
-            const alreadySpeaking = activeBubbles.some((b) => b.gladiatorId === glad.id);
-
-            if (activeBubbles.length < 2 && !alreadySpeaking) {
-              const line = getCampSpeechLine(glad, gladiatorsRef.current, gladiatorBondsRef.current);
-              activeBubbles.push({
-                id: `bubble_${Date.now()}_${Math.random()}`,
-                gladiatorId: glad.id,
-                speakerName: glad.name.split(' ')[0],
-                text: line,
-                timer: 4.5,
-                maxDuration: 4.5,
-              });
-              // Timing: Trigger randomly every 10 to 40 seconds per eligible gladiator
-              gladiatorSpeechCooldownsRef.current[glad.id] = 10 + Math.random() * 30;
-            } else {
-              // If at capacity or already speaking, recheck in 3 to 6 seconds
-              gladiatorSpeechCooldownsRef.current[glad.id] = 3 + Math.random() * 3;
-            }
-          }
-        }
-      }
-
-      // Update camp gladiators with quest departure & return walk physics
-      const updatedCampGlads = gladiatorsRef.current.map((glad) => {
-        if (glad.hp <= 0 || glad.hidden) return glad;
-
-        const updated = { ...glad };
-        updated.animTimer += dt;
-
-        // 1. Handling New Recruit Walk-In Animation (from off-screen left x: -30, y: 110 to camp target station)
-        if (updated.isWalkingIn) {
-          const dx = updated.targetX - updated.x;
-          const dy = updated.targetY - updated.y;
-          const dist = Math.hypot(dx, dy);
-
-          if (dist < 3) {
-            updated.isWalkingIn = false;
-            updated.state = 'idle';
-            updated.targetActivity = 'idle';
-            updated.actionTimer = 2.0 + Math.random() * 2.0;
-          } else {
-            const moveSpeed = 32;
-            updated.x += (dx / dist) * moveSpeed * dt;
-            updated.y += (dy / dist) * moveSpeed * dt;
-            updated.state = 'walking';
-            updated.flipX = false;
-          }
-          return updated;
-        }
-
-        // 2. Handling Quest Departure Walk Animation (walking to camp exit gate at 330, 145)
-        if (updated.questWalkState === 'departing') {
-          const timer = (updated.questWalkTimer ?? 2.0) - dt;
-          updated.questWalkTimer = timer;
-
-          const dx = updated.targetX - updated.x;
-          const dy = updated.targetY - updated.y;
-          const dist = Math.hypot(dx, dy);
-
-          if (timer <= 0 || dist < 3) {
-            updated.questWalkState = 'none';
-            updated.hidden = true;
-            updated.state = 'idle';
-          } else {
-            const moveSpeed = Math.max(35, dist / Math.max(0.1, timer));
-            updated.x += (dx / dist) * moveSpeed * dt;
-            updated.y += (dy / dist) * moveSpeed * dt;
-            updated.state = 'walking';
-            updated.flipX = false;
-          }
-          return updated;
-        }
-
-        // 2. Handling Quest Return Walk Animation (spawning at entrance and walking back into courtyard)
-        if (updated.questWalkState === 'returning') {
-          const timer = (updated.questWalkTimer ?? 2.2) - dt;
-          updated.questWalkTimer = timer;
-
-          const dx = updated.targetX - updated.x;
-          const dy = updated.targetY - updated.y;
-          const dist = Math.hypot(dx, dy);
-
-          if (timer <= 0 || dist < 3) {
-            updated.questWalkState = 'none';
-            updated.state = 'idle';
-            updated.targetActivity = 'idle';
-            updated.actionTimer = 2.0 + Math.random() * 2.0;
-            if (updated.justEquipped) {
-              updated.equipParticleTimer = 2.0;
-            }
-          } else {
-            const moveSpeed = Math.max(30, dist / Math.max(0.1, timer));
-            updated.x += (dx / dist) * moveSpeed * dt;
-            updated.y += (dy / dist) * moveSpeed * dt;
-            updated.state = 'walking';
-            updated.flipX = true;
-          }
-          return updated;
-        }
-
-        // If currently on quest (and not departing/returning), skip normal roaming
-        if (updated.status === 'On Quest') {
-          return updated;
-        }
-
-        // Normal Camp Wandering, Resting, Sparring & Sitting
-        // Check if currently investigating a Ghost Flash spark
-        if (updated.investigatingFlash) {
-          const inv = updated.investigatingFlash;
-          const distToSpark = Math.hypot(updated.x - inv.flashX, updated.y - inv.flashY);
-          if (!inv.arrived && distToSpark <= 6) {
-            inv.arrived = true;
-            handleGladiatorInvestigationArrival(updated, inv.clickCount);
-          }
-        }
-
-        // Twitching / hallucinating behavior for Mad gladiators in camp
-        if (updated.traits?.includes('Mad')) {
-          updated.madTwitchTimer = (updated.madTwitchTimer || 0) + dt;
-          if (updated.madTwitchTimer >= 2.0 && Math.random() < 0.35) {
-            updated.madTwitchTimer = 0;
-            updated.flipX = !updated.flipX; // erratic manic turn
-          }
-        }
-
-        // Strict sit cooldown management (cooldown minimum 8-12s, minimum seated duration 6s)
-        if (updated.sitCooldown && updated.sitCooldown > 0) {
-          updated.sitCooldown = Math.max(0, updated.sitCooldown - dt);
-        }
-
-        const distToTarget = Math.hypot(
-          (updated.targetX ?? updated.x) - updated.x,
-          (updated.targetY ?? updated.y) - updated.y,
-        );
-        const investigating =
-          !!updated.investigatingFlash && !updated.investigatingFlash.arrived;
-        const feastActive = !!feastStateRef.current?.active;
-
-        // Crouch only while a rest/sit timer is still running and the gladiator
-        // has reached the seat. Pathfinding and a finished timer return to idle/walk.
-        if (investigating) {
-          updated.isSitting = false;
-          updated.seatedDuration = 0;
-          if (updated.state === 'sitting' || updated.state === 'resting') {
-            updated.state = 'walking';
-          }
-          if (updated.targetActivity === 'sitting' || updated.targetActivity === 'resting') {
-            updated.targetActivity = 'walking';
-          }
-        } else if (
-          (updated.state === 'sitting' || updated.isSitting) &&
-          distToTarget <= 2 &&
-          updated.actionTimer > 0
-        ) {
-          updated.actionTimer -= dt;
-          updated.state = 'sitting';
-          updated.isSitting = true;
-          updated.targetActivity = 'sitting';
-          updated.targetX = updated.x;
-          updated.targetY = updated.y;
-          updated.seatedDuration = (updated.seatedDuration || 0) + dt;
-          if (updated.actionTimer <= 0) {
-            updated.isSitting = false;
-            updated.state = 'idle';
-            updated.targetActivity = 'idle';
-            updated.sitCooldown = feastActive ? 4.0 : 12.0;
-            updated.seatedDuration = 0;
-            updated.actionTimer = 2.5 + Math.random() * 3.0;
-          }
-        } else if (updated.state === 'sitting' || updated.isSitting) {
-          updated.isSitting = false;
-          updated.seatedDuration = 0;
-          if (distToTarget > 2) {
-            updated.state = 'walking';
-          } else {
-            updated.state = 'idle';
-            if (updated.targetActivity === 'sitting') {
-              updated.targetActivity = 'idle';
-            }
-          }
-        } else {
-          updated.isSitting = false;
-          updated.seatedDuration = 0;
-        }
-
-        // 10% Buffed passive healing in camp (+1.65 HP/s normal, +4.4 HP/s resting near tent)
-        // MEDICAL BAY FACILITY UPGRADE: Accelerates HP recovery by +55% / +110% / +220%!
-        // Must pause while the Emperor's summons pop-up is on screen!
-        if (!isHeraldSummonsOpenRef.current && deploymentTierRef.current?.isPodiumTrial !== true) {
-          const hasSaladin = gladiatorsRef.current.some(
-            (g) => g.heroType === 'saladin' && g.hp > 0,
-          );
-          const saladinMultiplier = hasSaladin ? 2.0 : 1.0;
-          const medBayMult = 1 + (ludusUpgrades.medicalBay * 0.55);
-          const isRestingNearTent = updated.state === 'resting';
-          const healRate = (isRestingNearTent ? 4.4 : 1.65) * saladinMultiplier * medBayMult;
-          if (updated.hp < updated.maxHp) {
-            updated.hp = Math.min(updated.maxHp, updated.hp + healRate * dt);
-          }
-
-          // Saladin Hero Healing Aura: When Saladin is in camp, heals nearby allies at steady passive 2.2 HP/sec with cross particles
-          const saladinInCamp = gladiatorsRef.current.find(
-            (g) => g.heroType === 'saladin' && g.hp > 0 && !g.hidden && g.questWalkState === 'none',
-          );
-          if (saladinInCamp && updated.id !== saladinInCamp.id && updated.hp < updated.maxHp) {
-            const distToSaladin = Math.hypot(updated.x - saladinInCamp.x, updated.y - saladinInCamp.y);
-            if (distToSaladin <= 75) {
-              updated.hp = Math.min(updated.maxHp, updated.hp + 2.2 * dt);
-              if (Math.random() < dt * 2.0) {
-                particlesRef.current.push({
-                  x: updated.x + (Math.random() - 0.5) * 8,
-                  y: updated.y - 10 + (Math.random() - 0.5) * 6,
-                  color: Math.random() < 0.6 ? '#4ade80' : '#ded095',
-                  vx: (Math.random() - 0.5) * 6,
-                  vy: -12 - Math.random() * 8,
-                  life: 0.6,
-                  maxLife: 0.6,
-                  size: 2,
-                });
-              }
-            }
-          }
-        }
-
-        // Saladin itself emits floating cross particles in camp
-        if (updated.heroType === 'saladin' && updated.hp > 0 && Math.random() < dt * 4.0) {
-          particlesRef.current.push({
-            x: updated.x + (Math.random() - 0.5) * 12,
-            y: updated.y - 12 + (Math.random() - 0.5) * 8,
-            color: Math.random() < 0.65 ? '#4ade80' : '#ded095',
-            vx: (Math.random() - 0.5) * 8,
-            vy: -14 - Math.random() * 8,
-            life: 0.7,
-            maxLife: 0.7,
-            size: 2,
-          });
-        }
-
-        if (updated.state !== 'sitting' && !updated.isSitting) {
-          updated.actionTimer -= dt;
-          if (updated.actionTimer <= 0) {
-            const canSit = (updated.sitCooldown || 0) <= 0;
-            const nextActs: ('idle' | 'walking' | 'sparring' | 'resting' | 'sitting')[] = canSit
-              ? ['idle', 'walking', 'sparring', 'resting', 'sitting']
-              : ['idle', 'walking', 'sparring', 'resting'];
-            const roll = nextActs[Math.floor(Math.random() * nextActs.length)];
-
-            if (roll === 'sitting') {
-              updated.isSitting = true;
-              updated.sitCooldown = 12.0;
-              updated.seatedDuration = 0;
-            }
-
-            updated.targetActivity = roll;
-            updated.actionTimer = 2.5 + Math.random() * 3.5;
-
-            if (roll === 'walking') {
-              updated.targetX = 65 + Math.random() * 190;
-              updated.targetY = 95 + Math.random() * 60;
-            } else if (roll === 'sparring') {
-              updated.targetX = 215 + Math.random() * 25;
-              updated.targetY = 88 + Math.random() * 20;
-            } else if (roll === 'resting') {
-              updated.targetX = 65 + Math.random() * 35;
-              updated.targetY = 98 + Math.random() * 26;
-            } else if (roll === 'sitting') {
-              updated.targetX = 100 + Math.random() * 120;
-              updated.targetY = 112 + Math.random() * 40;
-            } else {
-              updated.targetX = updated.x;
-              updated.targetY = updated.y;
-            }
-          }
-
-          const dx = updated.targetX - updated.x;
-          const dy = updated.targetY - updated.y;
-          const dist = Math.hypot(dx, dy);
-
-          if (dist > 2) {
-            const moveSpeed = 15 + updated.speed * 0.3;
-            updated.x += (dx / dist) * moveSpeed * dt;
-            updated.y += (dy / dist) * moveSpeed * dt;
-            if (Math.abs(dx) > 0.5) {
-              updated.flipX = dx < 0;
-            }
-            updated.state = 'walking';
-          } else {
-            updated.state = updated.targetActivity || 'idle';
-            if (updated.state === 'sitting') {
-              updated.isSitting = true;
-              updated.seatedDuration = 0;
-              updated.actionTimer = Math.max(6.0, updated.actionTimer);
-            }
-          }
-        }
-
-        // Clamp living gladiators within camp courtyard grounds so they never walk off-screen
-        if (updated.questWalkState === 'none' && !updated.isWalkingIn) {
-          updated.x = Math.max(38, Math.min(295, updated.x));
-          updated.y = Math.max(90, Math.min(166, updated.y));
-        }
-
-        // Sparring practice strikes at the wooden Manikin with wood impact thump SFX
-        if (updated.state === 'sparring') {
-          updated.sparHitTimer = (updated.sparHitTimer || 0) + dt;
-          if (updated.sparHitTimer >= 0.8) {
-            updated.sparHitTimer = 0;
-            gameAudio.playFootstepWood();
-            particlesRef.current.push({
-              x: 237,
-              y: 80,
-              color: PALETTE[14],
-              vx: (Math.random() - 0.5) * 14,
-              vy: -10 - Math.random() * 8,
-              life: 0.35,
-              maxLife: 0.35,
-            });
-          }
-        }
-
-        // Social conversation banter when two gladiators wander close
-        if (updated.state === 'idle' || updated.state === 'walking' || updated.state === 'sitting') {
-          const nearbyOther = gladiatorsRef.current.find(
-            (other) =>
-              other.id !== updated.id &&
-              other.hp > 0 &&
-              !other.hidden &&
-              Math.hypot(other.x - updated.x, other.y - updated.y) < 24,
-          );
-          if (
-            nearbyOther &&
-            campSpeechBubblesRef.current.length < 2 &&
-            !campSpeechBubblesRef.current.some((b) => b.gladiatorId === updated.id || b.gladiatorId === nearbyOther.id) &&
-            Math.random() < dt * 0.08
-          ) {
-            const banterQuotes = [
-              'Hast thou traded for the Parthian archer card yet?',
-              'More spiced Falernian wine tonight, brother!',
-              'My dice always favor the high rolls after a hard training bout.',
-              'I wager three copper tokens on the next chariot race.',
-            ];
-            const q = banterQuotes[Math.floor(Math.random() * banterQuotes.length)];
-            campSpeechBubblesRef.current.push({
-              id: `banter_${Date.now()}_${Math.random()}`,
-              gladiatorId: updated.id,
-              speakerName: updated.name.split(' ')[0],
-              text: q,
-              timer: 4.2,
-              maxDuration: 4.2,
-            });
-            updated.flipX = nearbyOther.x < updated.x;
-          }
-        }
-
-        // Sparring XP progression at dummy (reduced by 20%)
-        if (updated.state === 'sparring' && Math.random() < dt * 0.28) {
-          updated.xp += 1;
-          if (updated.xp >= updated.xpNeeded) {
-            updated.level += 1;
-            updated.xp = 0;
-            updated.xpNeeded = Math.floor(updated.xpNeeded * 1.5);
-
-            const strGain = (updated.culture === 'celt' || updated.culture === 'hunnic' || updated.weightClass === 'Heavyweight') ? 2 : 1;
-            const dexGain = (updated.culture === 'berber' || updated.culture === 'scythian' || updated.weightClass === 'Lightweight') ? 2 : 1;
-            const vitGain = (updated.culture === 'roman' || updated.weightClass === 'Heavyweight') ? 2 : 1;
-            const curA = updated.attributes || { str: 10, dex: 10, vit: 10, con: 10, wil: 10 };
-            updated.attributes = {
-              ...curA,
-              str: (curA.str ?? 10) + strGain,
-              dex: (curA.dex ?? 10) + dexGain,
-              vit: (curA.vit ?? curA.con ?? 10) + vitGain,
-              con: (curA.vit ?? curA.con ?? 10) + vitGain,
-            };
-
-            const recalc = recalculateGladiatorStats(updated);
-            updated.attack = recalc.attack;
-            updated.defense = recalc.defense;
-            updated.speed = recalc.speed;
-            updated.maxHp = recalc.maxHp;
-            updated.hp = updated.maxHp;
-          }
-        }
-
-        return updated;
-      });
-
-      // Gentle separation / anti-stacking for up to 10 living champions in camp
-      // Locked seated gladiators are NEVER moved or jittered when bumped by roaming gladiators
-      for (let i = 0; i < updatedCampGlads.length; i++) {
-        const g1 = updatedCampGlads[i];
-        if (g1.hp <= 0 || g1.hidden || g1.questWalkState !== 'none' || g1.isWalkingIn) continue;
-        for (let j = i + 1; j < updatedCampGlads.length; j++) {
-          const g2 = updatedCampGlads[j];
-          if (g2.hp <= 0 || g2.hidden || g2.questWalkState !== 'none' || g2.isWalkingIn) continue;
-          const cdx = g2.x - g1.x;
-          const cdy = g2.y - g1.y;
-          const cdist = Math.hypot(cdx, cdy);
-          if (cdist < 14 && cdist > 0.001) {
-            const overlap = 14 - cdist;
-            const nx = (cdx / cdist) * overlap;
-            const ny = (cdy / cdist) * overlap;
-
-            const g1Sitting = g1.state === 'sitting' || g1.isSitting;
-            const g2Sitting = g2.state === 'sitting' || g2.isSitting;
-
-            if (g1Sitting && g2Sitting) {
-              // Both seated: neither moves
-            } else if (g1Sitting) {
-              // g1 is seated & locked in place: only nudge roaming g2
-              g2.x = Math.max(38, Math.min(295, g2.x + nx));
-              g2.y = Math.max(90, Math.min(166, g2.y + ny));
-            } else if (g2Sitting) {
-              // g2 is seated & locked in place: only nudge roaming g1
-              g1.x = Math.max(38, Math.min(295, g1.x - nx));
-              g1.y = Math.max(90, Math.min(166, g1.y - ny));
-            } else {
-              // Both roaming: divide overlap equally
-              g1.x = Math.max(38, Math.min(295, g1.x - nx * 0.5));
-              g1.y = Math.max(90, Math.min(166, g1.y - ny * 0.5));
-              g2.x = Math.max(38, Math.min(295, g2.x + nx * 0.5));
-              g2.y = Math.max(90, Math.min(166, g2.y + ny * 0.5));
-            }
-          }
-        }
-      }
-
-      gladiatorsRef.current = updatedCampGlads;
-      setGladiators(updatedCampGlads);
-    } else if (modeRef.current === 'arena') {
-      // Update Active Arena Speech Bubbles
-      arenaSpeechBubblesRef.current = arenaSpeechBubblesRef.current.filter((b) => {
-        b.timer -= dt;
-        return b.timer > 0;
-      });
-
-      // Dynamic Procedural Arena Crowd Ambient Engine (5 Crowd Tiers)
-      if (!isSimPaused && combatOutcomeRef.current === 'in_progress' && !judgmentStateRef.current.active) {
-        crowdAudioTimerRef.current -= dt;
-        if (crowdAudioTimerRef.current <= 0) {
-          const curTier = activeTierRef.current;
-          const isBossOrSpec = isEmperorDuelRef.current || isSandboxBattleRef.current || !!curTier?.isBoss;
-          const cTier = getCrowdTier(unlockedTierIndex, totalBattlesWonRef.current, isBossOrSpec);
-
-          if (cTier === 1) {
-            crowdAudioTimerRef.current = 5.5 + Math.random() * 2.5;
-            if (Math.random() < 0.6) {
-              gameAudio.playWindWhistle();
-            } else {
-              gameAudio.playBoredClap();
-            }
-          } else if (cTier === 2) {
-            crowdAudioTimerRef.current = 4.2 + Math.random() * 2.0;
-            gameAudio.playCrowdReaction(2, false);
-          } else if (cTier === 3) {
-            crowdAudioTimerRef.current = 3.2 + Math.random() * 1.5;
-            gameAudio.playCrowdReaction(3, false);
-          } else if (cTier === 4) {
-            crowdAudioTimerRef.current = 2.4 + Math.random() * 1.2;
-            gameAudio.playCrowdReaction(4, false);
-          } else {
-            // Tier 5: The Imperial Apex
-            crowdAudioTimerRef.current = 1.8 + Math.random() * 1.0;
-            gameAudio.playCrowdReaction(5, false);
-          }
-        }
-      }
-
-      // ARENA PHASE: Real-time Multi-Fighter Skirmish simulation
-      if (!isSimPaused && combatOutcomeRef.current === 'in_progress') {
-        const effectiveDt = dt * simSpeed;
-        stepArenaCombat(effectiveDt);
-      }
-    } else if (modeRef.current === 'podium') {
-      // PODIUM PHASE: Ceremonial fire ignition on newly won tier, crowd whoop, and drifting flame embers
-      podiumTimerRef.current += dt;
-      if (podiumFlashTimerRef.current > 0) {
-        podiumFlashTimerRef.current -= dt;
-      }
-
-      const newlyWonTier = Math.max(0, unlockedTierIndex - 1);
-      const stages = [
-        { idx: 0, y: 154, h: 16, w: 260, x: 42 },
-        { idx: 1, y: 132, h: 16, w: 210, x: 67 },
-        { idx: 2, y: 110, h: 16, w: 160, x: 92 },
-        { idx: 3, y: 88,  h: 16, w: 110, x: 117 },
-        { idx: 4, y: 62,  h: 18, w: 70,  x: 137 },
-      ];
-
-      if (!podiumHasIgnitedRef.current && podiumTimerRef.current >= 0.25) {
-        podiumHasIgnitedRef.current = true;
-        podiumFlashTimerRef.current = 0.45;
-        gameAudio.playCrowdWhoop();
-        gameAudio.playPowerupChime();
-
-        const targetStage = stages[newlyWonTier] || stages[0];
-        const pts = [
-          { x: targetStage.x - 3, y: targetStage.y - 6 },
-          { x: targetStage.x + targetStage.w + 1, y: targetStage.y - 6 },
-          { x: targetStage.x + targetStage.w / 2, y: targetStage.y + 4 },
-        ];
-
-        pts.forEach((pt) => {
-          for (let i = 0; i < 18; i++) {
-            const angle = -Math.PI / 2 + (Math.random() - 0.5) * 2.2;
-            const speed = 25 + Math.random() * 50;
-            particlesRef.current.push({
-              x: pt.x,
-              y: pt.y,
-              color:
-                Math.random() < 0.35
-                  ? PALETTE[0]
-                  : Math.random() < 0.65
-                    ? PALETTE[15]
-                    : PALETTE[3],
-              vx: Math.cos(angle) * speed,
-              vy: Math.sin(angle) * speed,
-              life: 0.7 + Math.random() * 0.8,
-              maxLife: 1.5,
-              size: 1 + (Math.random() > 0.5 ? 1 : 0),
-            });
-          }
-        });
-      }
-
-      // Lit braziers continuously emit gentle embers
-      if (Math.random() < 0.4) {
-        const litStages = stages.filter((s) => s.idx < unlockedTierIndex);
-        if (litStages.length > 0) {
-          const st = litStages[Math.floor(Math.random() * litStages.length)];
-          const isLeft = Math.random() < 0.5;
-          const ex = isLeft ? st.x - 3 : st.x + st.w + 1;
-          const ey = st.y - 6;
-          particlesRef.current.push({
-            x: ex + (Math.random() - 0.5) * 4,
-            y: ey,
-            color: Math.random() < 0.5 ? PALETTE[0] : PALETTE[15],
-            vx: (Math.random() - 0.5) * 10,
-            vy: -16 - Math.random() * 22,
-            life: 0.7 + Math.random() * 0.5,
-            maxLife: 1.2,
-            size: 1,
-          });
-        }
-      }
-    }
+  // Stage 3B: one end-of-battle entry point. The view is rebuilt every render and captured by this callback
+  // under the same dependency list the old finishDuelInternal had, so it sees exactly the same (stale) values.
+  const battleView: BattleView = {
+    gladiatorsRef,
+    arenaFightersRef,
+    roster,
+    lastDeployedGladIdsRef,
+    setAftermathData,
+    setCombatOutcome,
+    combatOutcomeRef,
+    setTotalBattlesWon,
+    totalBattlesWonRef,
+    setGameState,
+    activeTierRef,
+    selectedGladiatorIds,
+    lowestHpPctRef,
+    gladiatorBondsRef,
+    setGladiatorBonds,
+    battleRageEventsRef,
+    unbondedDeathsRef,
+    recordGladiatorDeath,
+    ludusUpgrades,
+    triggerHeroArrival,
+    economy,
+    setBattlefieldLoot,
+    setUnlockedTierIndex,
+    setIsColiseumChampion,
+    setIsEmperorEnraged,
+    isEmperorEnragedRef,
+    pendingPostFifthDialogueRef,
+    setManagerRenown,
+    setSpeechcraftLevel,
+    managerRenown,
+    setIsEmperorDefeated,
+    isEmperorDefeatedRef,
+    setIsRevoltUnlocked,
+    isRevoltUnlockedRef,
+    unlockedTierIndex,
+    setSideSkirmishes,
+    merchantStateRef,
+    setMerchantState,
+    firstBattleDoneRef,
+    setFirstBattleDone,
+    pendingPostBattleTutorialRef,
+    setFreeRecruitCultures,
+    freeRecruitCulturesRef,
+    heraldTimerRef,
+    unlockedTierIndexRef,
+    gameStateRef,
+    triggerAutosave,
+    generateSideSkirmishes,
   };
+  const finishBattle = useCallback(
+    (outcome: BattleOutcome) => resolveBattle(battleView, outcome),
+    [addCombatLog, recordGladiatorDeath, selectedGladiatorIds, unlockedTierIndex, triggerAutosave],
+  );
+
+  // Main Simulation Loop
+    const updateView: UpdateView = {
+    screenShakeTimerRef,
+    setCinematicState,
+    cinematicStateRef,
+    cinematicPhaseStartTimeRef,
+    typewriterCharCountRef,
+    typewriterCharTimerRef,
+    isTypewriterDoneRef,
+    emperorStabFiredRef,
+    economy,
+    campShootingStarTimerRef,
+    campShootingStarActiveDurationRef,
+    isManagerMenuOpen,
+    etherealSparksRef,
+    crowdAudioTimerRef,
+    ludusUpgrades,
+    isUpgradesModalOpen,
+    isBreedingModalOpen,
+    setFeastState,
+    feastStateRef,
+    setFeastSlaves,
+    feastSlavesRef,
+    isFeastOfferPendingRef,
+    currentVisitor,
+    setCurrentVisitor,
+    visitorTimerRef,
+    isVisitorModalOpen,
+    setIsVisitorModalOpen,
+    setVisitorWalkingNpc,
+    visitorWalkingNpcRef,
+    setPhysicianNpc,
+    physicianNpcRef,
+    campActionCooldowns,
+    setCampActionCooldowns,
+    arenaActionCooldowns,
+    setArenaActionCooldowns,
+    crispPopups,
+    pepTalkState,
+    unlockedTierIndex,
+    setIsEmperorDuel,
+    isEmperorDuelRef,
+    isEmperorDuelModalOpen,
+    setHeroArrivalModal,
+    heroArrivalModalRef,
+    setKeeperSequence,
+    keeperSequenceRef,
+    totalBattlesWonRef,
+    podiumTimerRef,
+    podiumHasIgnitedRef,
+    podiumFlashTimerRef,
+    setJudgmentState,
+    judgmentStateRef,
+    setMerchantState,
+    merchantStateRef,
+    setDevoteeState,
+    devoteeStateRef,
+    campTimeOfDayRef,
+    isBanditAlarmOpen,
+    setCourierNpcState,
+    courierNpcRef,
+    setIsHeraldSummonsOpen,
+    heraldTimerRef,
+    isTrialBellModalOpenRef,
+    setTutorialStage,
+    tutorialStageRef,
+    isDebugMenuOpen,
+    firstBattleDoneRef,
+    setPostBattleStage,
+    postBattleStageRef,
+    postBattleTimerRef,
+    pendingPostBattleTutorialRef,
+    camZoomRef,
+    camXRef,
+    camYRef,
+    dimAlphaRef,
+    spotRadiusRef,
+    spotXRef,
+    spotYRef,
+    sparkleTimerRef,
+    tutCharCountRef,
+    tutCharTimerRef,
+    tutIsLineDoneRef,
+    postTutCharCountRef,
+    postTutCharTimerRef,
+    postTutIsLineDoneRef,
+    tutorialIdleTimerRef,
+    tutorialWineTimerRef,
+    isGameMenuOpen,
+    deploymentTierRef,
+    setArmoryTab,
+    setActiveExpeditions,
+    courierNotice,
+    setCourierNotice,
+    courierTimerRef,
+    unlockedChains,
+    isHeraldSummonsOpenRef,
+    isBattlesModalOpenRef,
+    isArmoryModalOpenRef,
+    isRosterModalOpenRef,
+    isBondingModalOpenRef,
+    isGameMenuOpenRef,
+    isHowToPlayOpenRef,
+    isQuestBoardOpenRef,
+    activeQuestNodeRef,
+    questResolutionRef,
+    activeExpeditionsRef,
+    roster,
+    setStoryState,
+    storyStateRef,
+    storyCooldownRef,
+    isSandboxBattleRef,
+    isSimulatedAdActive,
+    setIsSimulatedAdActive,
+    setAdCountdown,
+    adCountdownRef,
+    sandboxHoldTimerRef,
+    setDisplayedGold,
+    displayedGoldRef,
+    goldTallyRef,
+    flyingGoldCoinsRef,
+    goldTargetGlowTimerRef,
+    simSpeed,
+    isSimPaused,
+    setCrispPopups,
+    arenaFightersRef,
+    particlesRef,
+    campSpeechBubblesRef,
+    arenaSpeechBubblesRef,
+    gladiatorSpeechCooldownsRef,
+    animTimeRef,
+    gladiatorsRef,
+    gameStateRef,
+    modeRef,
+    activeTierRef,
+    combatOutcomeRef,
+    gladiatorBondsRef,
+    unlockedTierIndexRef,
+    spawnCrispPopup,
+    addCombatLog,
+    spawnBloodSpray,
+    handleGladiatorInvestigationArrival,
+    advanceTutorial,
+    triggerStoryEvent,
+    resolveExpedition,
+    closeAllCampModals,
+    resolveBattle: finishBattle,
+    stepArenaCombat,
+  };
+  const update = (dt: number) => updateWorld(updateView, dt);
 
   // Main Render Loop onto 344x192 canvas scaled 4x, with Crisp High-Res Vector Overlay on Display Canvas
-  const draw = (displayCtx: CanvasRenderingContext2D) => {
-    const offscreen = offscreenCanvasRef.current;
-    if (!offscreen) return;
-    const offCtx = offscreen.getContext('2d');
-    if (!offCtx) return;
-
-    offCtx.save();
-    offCtx.imageSmoothingEnabled = false;
-
-    // Clear low-res pixel canvas
-    offCtx.fillStyle = PALETTE[5];
-    offCtx.fillRect(0, 0, LOGIC_WIDTH, LOGIC_HEIGHT);
-
-    if (screenShakeTimerRef.current > 0 && !isNaN(screenShakeTimerRef.current)) {
-      const intensity = Math.min(1, Math.max(0, screenShakeTimerRef.current / 0.35));
-      const shakeMag = Math.max(0, 3.5 * intensity);
-      const shakeX = (Math.random() - 0.5) * shakeMag * 2;
-      const shakeY = (Math.random() - 0.5) * shakeMag * 2;
-      if (Number.isFinite(shakeX) && Number.isFinite(shakeY)) {
-        offCtx.translate(Math.round(shakeX), Math.round(shakeY));
-      }
-    }
-
-    // ========================================================================
-    // CINEMATIC 16-BIT INTRO RENDERING (PHASES 0 TO 3)
-    // ========================================================================
-    if (cinematicStateRef.current < 4) {
-      const now = getSafeNow();
-      if (isNaN(cinematicPhaseStartTimeRef.current) || !cinematicPhaseStartTimeRef.current) {
-        cinematicPhaseStartTimeRef.current = now;
-      }
-      let elapsed = Math.max(0, (now - cinematicPhaseStartTimeRef.current) / 1000);
-      if (isNaN(elapsed)) {
-        elapsed = 0;
-      }
-      const cState = Math.max(0, Math.min(3, cinematicStateRef.current || 0));
-
-      if (cState === 0) {
-        // Phase 1: The Manager
-        renderPhase1(offCtx, LOGIC_WIDTH, LOGIC_HEIGHT, elapsed);
-      } else if (cState === 1) {
-        // Phase 2 & 3: The Approach & The Pan-Up
-        renderPhase2And3(offCtx, LOGIC_WIDTH, LOGIC_HEIGHT, elapsed);
-      } else if (cState === 2) {
-        // Phase 4: The Title
-        renderPhase4(offCtx, LOGIC_WIDTH, LOGIC_HEIGHT, elapsed);
-      } else if (cState === 3) {
-        // Phase 5: The Monologue (Visual Novel UI + Typewriter)
-        renderPhase5(
-          offCtx,
-          LOGIC_WIDTH,
-          LOGIC_HEIGHT,
-          elapsed,
-          typewriterCharCountRef.current || 0,
-          isTypewriterDoneRef.current,
-        );
-      }
-
-      // Transfer low-res offscreen canvas to main canvas at 4x scale
-      offCtx.restore();
-      prepareCanvas(displayCtx, canvasWidth, canvasHeight);
-      displayCtx.imageSmoothingEnabled = false;
-      displayCtx.drawImage(offscreen, 0, 0, canvasWidth, canvasHeight);
-      return;
-    }
-
-    if (mode === 'camp') {
-      // 1. CAMP VIEW (Pale Alabaster Floor, Grey Framing Walls, Roaming Gladiators with Camera Zoom & Pan)
-      offCtx.save();
-      // Translate to screen center, scale, translate back from camera focus point
-      offCtx.translate(LOGIC_WIDTH / 2, LOGIC_HEIGHT / 2);
-      offCtx.scale(camZoomRef.current || 1, camZoomRef.current || 1);
-      offCtx.translate(-camXRef.current, -camYRef.current);
-
-      // Solitary rare shooting star only in camp skybox
-      const campStarDuration = 1.5;
-      const shootingStarProg =
-        campShootingStarActiveDurationRef.current > 0
-          ? Math.max(0, Math.min(1, 1 - campShootingStarActiveDurationRef.current / campStarDuration))
-          : 0;
-
-      drawCampSkyAndWalls(
-        offCtx,
-        animTimeRef.current || 0,
-        Math.min(5, unlockedTierIndex),
-        shootingStarProg,
-        campTimeOfDayRef.current || 35,
-      );
-      drawCampCourtyardProps(offCtx, hoveredCampObject, animTimeRef.current || 0, ludusUpgrades);
-
-      // Render Feast Table and Bustling Slaves if feast is active
-      if (feastStateRef.current?.active) {
-        drawFeastTable(
-          offCtx,
-          168,
-          126,
-          feastStateRef.current.tableAlpha,
-          animTimeRef.current || 0,
-        );
-        drawFeastSlaves(
-          offCtx,
-          feastSlavesRef.current,
-          animTimeRef.current || 0,
-        );
-      }
-
-      // Draw Ethereal Sparks (Ghost Flash Easter Egg: tiny 2x2 px spark particle in #ffffff / pale cyan #e0f8cf)
-      etherealSparksRef.current.forEach((spark) => {
-        const alpha = Math.max(0, spark.timer / spark.maxDuration);
-        offCtx.save();
-        offCtx.globalAlpha = alpha;
-        const sx = Math.round(spark.x);
-        const sy = Math.round(spark.y);
-        // Core 2x2 spark
-        offCtx.fillStyle = '#ffffff';
-        offCtx.fillRect(sx, sy, 2, 2);
-        // Pale cyan ethereal glow (#e0f8cf)
-        offCtx.fillStyle = '#e0f8cf';
-        offCtx.fillRect(sx - 1, sy, 1, 2);
-        offCtx.fillRect(sx + 2, sy, 1, 2);
-        offCtx.fillRect(sx, sy - 1, 2, 1);
-        offCtx.fillRect(sx, sy + 2, 2, 1);
-        offCtx.restore();
-      });
-
-      // Draw Cultural Memorial Graves along Camp Bottom Strip
-      (memorialGraves || []).forEach((grave) => {
-        if (!grave) return;
-        const isHovered = hoveredGraveId === grave.id || selectedGraveId === grave.id;
-        drawCulturalGrave(offCtx, grave, isHovered, animTimeRef.current || 0);
-      });
-
-      // Draw Alexandrian Physician NPC (if present in camp)
-      if (physicianNpcRef.current.active) {
-        drawPhysicianNpc(offCtx, physicianNpcRef.current, animTimeRef.current || 0);
-      }
-
-      // Draw Traveling Nomad Merchant (if present in camp)
-      if (merchantStateRef.current.active) {
-        const isMerchantHovered = hoveredCampObject === 'merchant';
-        drawTravelingMerchant(offCtx, merchantStateRef.current, isMerchantHovered, animTimeRef.current || 0);
-      }
-
-      // Draw Zealous Devotee Camp Visitor (if present in camp)
-      if (devoteeStateRef.current.active) {
-        drawDevoteeSprite(offCtx, devoteeStateRef.current, animTimeRef.current || 0);
-      }
-
-      // Draw Roman Civilian Courier arriving from bottom of camp towards tent
-      if (courierNpcRef.current.active) {
-        drawRomanCivilianCourier(
-          offCtx,
-          courierNpcRef.current.x,
-          courierNpcRef.current.y,
-          courierNpcRef.current.animTimer || 0,
-          courierNpcRef.current.flipX,
-        );
-      }
-
-      // Draw Dynamic Camp Visitor walking into tent
-      if (visitorWalkingNpcRef.current?.active) {
-        drawVisitorNpc(
-          offCtx,
-          visitorWalkingNpcRef.current,
-          animTimeRef.current || 0,
-        );
-      }
-
-      // Stable Y-sorting with gladiator ID tie-breaker to completely eliminate z-index thrashing
-      const sortedCampGlads = [...(gladiators || [])].sort((a, b) => {
-        if (Math.abs(a.y - b.y) > 0.01) return a.y - b.y;
-        return a.id.localeCompare(b.id);
-      });
-
-      sortedCampGlads.forEach((glad) => {
-        if (!glad || glad.hp <= 0 || glad.hidden) return;
-
-        // Saladin Hero Healing Aura in Camp
-        if (glad.heroType === 'saladin' && glad.hp > 0 && !glad.hidden && glad.questWalkState === 'none') {
-          drawSaladinHealingAura(offCtx, glad.x, glad.y - 8, animTimeRef.current || 0);
-        }
-
-        let alpha = 1.0;
-        if (glad.questWalkState === 'departing' && (glad.questWalkTimer ?? 0) < 0.6) {
-          alpha = Math.max(0, (glad.questWalkTimer ?? 0) / 0.6);
-        } else if (
-          glad.questWalkState === 'returning' &&
-          (glad.questWalkTimer ?? 0) > (glad.questWalkTotal ?? 2.2) - 0.5
-        ) {
-          const elapsed = (glad.questWalkTotal ?? 2.2) - (glad.questWalkTimer ?? 0);
-          alpha = Math.min(1, Math.max(0, elapsed / 0.5));
-        }
-
-        offCtx.save();
-        if (alpha < 1.0) {
-          offCtx.globalAlpha = Math.max(0, Math.min(1, alpha));
-        }
-
-        drawCulturalGladiator(
-          offCtx,
-          glad.x,
-          glad.y,
-          glad.culture,
-          glad.state,
-          glad.flipX,
-          glad.animTimer || 0,
-          0,
-          0,
-          0,
-          glad.level || 1,
-          glad.equipped,
-          glad.isCavalry,
-          glad.isElephant,
-          false,
-          0,
-          false,
-          glad.heroType,
-        );
-
-        // Equip Exit / Return Particle Effect: gold/bright floating particle aura VFX (#F7DEAA) rising from sprite over 2 seconds
-        if (glad.justEquipped && (glad.equipParticleTimer ?? 0) > 0) {
-          const timer = glad.equipParticleTimer ?? 0;
-          const progress = 1 - timer / 2.0;
-          const alpha = Math.max(0, Math.min(1, timer / 2.0));
-          offCtx.save();
-          offCtx.globalAlpha = alpha;
-
-          const pOffsets = [
-            { xOff: -6, rise: 24, sway: 5, color: '#F7DEAA' },
-            { xOff: -2, rise: 30, sway: 7, color: '#ded095' },
-            { xOff: 2,  rise: 22, sway: 4, color: '#F7DEAA' },
-            { xOff: 6,  rise: 28, sway: 6, color: '#ded095' },
-            { xOff: 0,  rise: 34, sway: 8, color: '#F7DEAA' },
-          ];
-
-          for (const p of pOffsets) {
-            const px = Math.round(glad.x + p.xOff + Math.sin(progress * p.sway) * 2);
-            const py = Math.round(glad.y - 12 - progress * p.rise);
-            offCtx.fillStyle = p.color;
-            offCtx.fillRect(px, py, 1, 1);
-          }
-          offCtx.restore();
-        }
-
-        // Low-res Health Bar above gladiator in camp
-        const safeMaxHp = Math.max(1, glad.maxHp || 150);
-        const hpPct = Math.max(0, Math.min(1, (glad.hp || 0) / safeMaxHp));
-        offCtx.fillStyle = PALETTE[5];
-        offCtx.fillRect(Math.round(glad.x - 12), Math.round(glad.y + 3), 24, 4);
-        offCtx.fillStyle = hpPct > 0.4 ? PALETTE[8] : PALETTE[3];
-        offCtx.fillRect(
-          Math.round(glad.x - 11),
-          Math.round(glad.y + 4),
-          Math.round(22 * hpPct),
-          2,
-        );
-
-        if (glad.hp < safeMaxHp) {
-          offCtx.fillStyle = PALETTE[0];
-          offCtx.fillRect(Math.round(glad.x + 8), Math.round(glad.y - 18), 3, 1);
-          offCtx.fillRect(Math.round(glad.x + 9), Math.round(glad.y - 19), 1, 3);
-        }
-
-        offCtx.restore();
-      });
-
-      // Sparkle shine particle stars in camp courtyard
-      if (sparkleTimerRef.current > 0) {
-        for (let i = 0; i < 7; i++) {
-          const sparkPhase = (animTimeRef.current || 0) * 4 + i * 1.5;
-          const sx = 45 + ((i * 47 + 23) % (LOGIC_WIDTH - 90));
-          const sy = 88 + ((i * 31 + 17) % 70);
-          const alpha = (Math.sin(sparkPhase) + 1) * 0.5;
-          if (alpha > 0.25) {
-            offCtx.save();
-            offCtx.globalAlpha = Math.max(0, Math.min(1, alpha));
-            offCtx.fillStyle = i % 2 === 0 ? PALETTE[0] : PALETTE[15];
-            offCtx.fillRect(sx - 1, sy, 3, 1);
-            offCtx.fillRect(sx, sy - 1, 1, 3);
-            offCtx.fillStyle = PALETTE[0];
-            offCtx.fillRect(sx, sy, 1, 1);
-            offCtx.restore();
-          }
-        }
-      }
-
-      offCtx.restore();
-
-      // ======================================================================
-      // CAMP DAY/NIGHT CYCLE & DYNAMIC WEATHER OVERLAY (3-SECOND SMOOTH GRADIENT)
-      // ======================================================================
-      const cTime = (campTimeOfDayRef.current || 35) % 120;
-      const tintInfo = getSmoothDayNightTint(cTime);
-      const isNight = tintInfo.isNight;
-
-      if (tintInfo.a > 0.005) {
-        offCtx.save();
-        offCtx.fillStyle = `rgba(${tintInfo.r}, ${tintInfo.g}, ${tintInfo.b}, ${tintInfo.a})`;
-        offCtx.fillRect(0, 0, LOGIC_WIDTH, LOGIC_HEIGHT);
-
-        // Soft Ambient Bloom for Camp Night Light Sources (Replacing hard dithered rings)
-        if (isNight) {
-          const curAnimTime = animTimeRef.current || 0;
-          const warmGlowSources = [
-            [64, 76, 28, 0],    // Pavilion tent window / entrance
-            [175, 84, 24, 1.2], // Weapon rack lantern
-            [305, 161, 22, 2.4],// Bronze trial bell lantern
-            // Wall braziers / torches along ashlar wall niches
-            [45, 52, 18, 0.8],
-            [111, 52, 18, 2.0],
-            [177, 52, 18, 3.2],
-            [243, 52, 18, 1.5],
-            [309, 52, 18, 2.8],
-          ];
-
-          // Lit candle alcoves by camp wall
-          const CANDLE_ALCOVES = [
-            [52, 68],
-            [118, 68],
-            [184, 68],
-            [250, 68],
-            [284, 68],
-          ];
-          const podiumWonCount = Math.min(5, unlockedTierIndex);
-          for (let ci = 0; ci < podiumWonCount; ci++) {
-            warmGlowSources.push([CANDLE_ALCOVES[ci][0], CANDLE_ALCOVES[ci][1] - 4, 14, ci * 1.4]);
-          }
-
-          warmGlowSources.forEach(([gx, gy, gr, gPhase]) => {
-            drawSoftAmbientBloom(offCtx, gx, gy, gr, curAnimTime, 1.05, gPhase);
-          });
-        }
-        offCtx.restore();
-      }
-
-      // Dynamic Camp Rain Weather
-      if (campWeatherRef.current === 'rain') {
-        offCtx.save();
-        // Subtle blue-gray rain atmosphere
-        offCtx.fillStyle = 'rgba(55, 75, 105, 0.15)';
-        offCtx.fillRect(0, 0, LOGIC_WIDTH, LOGIC_HEIGHT);
-
-        // Diagonal rain streaks
-        const aTime = animTimeRef.current || 0;
-        offCtx.fillStyle = 'rgba(200, 220, 245, 0.5)';
-        for (let r = 0; r < 48; r++) {
-          const rx = ((r * 23 + aTime * 140) % (LOGIC_WIDTH + 40)) - 20;
-          const ry = (r * 19 + aTime * 280) % LOGIC_HEIGHT;
-          offCtx.fillRect(Math.round(rx), Math.round(ry), 1, 4);
-          offCtx.fillRect(Math.round(rx - 1), Math.round(ry + 1), 1, 2);
-
-          // Small splash droplets on ground
-          if (ry > 84 && r % 3 === 0) {
-            offCtx.fillStyle = 'rgba(220, 235, 255, 0.65)';
-            offCtx.fillRect(Math.round(rx), Math.round(ry + 4), 2, 1);
-            offCtx.fillStyle = 'rgba(200, 220, 245, 0.5)';
-          }
-        }
-        offCtx.restore();
-      }
-
-      // 2. SPOTLIGHT & SCREEN DIMMING MASK
-      const curDim = dimAlphaRef.current || 0;
-      if (curDim > 0.01) {
-        offCtx.save();
-        const curTut = tutorialStageRef.current;
-        const curPost = postBattleStageRef.current;
-        const isCircularSpot =
-          curTut === 'spotlight_tent' ||
-          curTut === 'spotlight_armory' ||
-          curPost === 'dummy_spotlight_1' ||
-          curPost === 'dummy_spotlight_2' ||
-          curPost === 'tent_spotlight';
-
-        if (isCircularSpot) {
-          // World coordinates mapped to screen space
-          const screenSpotX =
-            LOGIC_WIDTH / 2 + ((spotXRef.current || 64) - (camXRef.current || LOGIC_WIDTH / 2)) * (camZoomRef.current || 1);
-          const screenSpotY =
-            LOGIC_HEIGHT / 2 + ((spotYRef.current || 78) - (camYRef.current || LOGIC_HEIGHT / 2)) * (camZoomRef.current || 1);
-          const pulse = 1 + 0.05 * Math.sin((animTimeRef.current || 0) * 4);
-          const rawRadius = (spotRadiusRef.current || 20) * pulse * (camZoomRef.current || 1);
-          const radius = Number.isFinite(rawRadius) ? Math.max(1, rawRadius) : 20;
-          const safeX = Number.isFinite(screenSpotX) ? screenSpotX : LOGIC_WIDTH / 2;
-          const safeY = Number.isFinite(screenSpotY) ? screenSpotY : LOGIC_HEIGHT / 2;
-
-          offCtx.fillStyle = `rgba(9, 13, 22, ${Math.min(1, Math.max(0, curDim))})`;
-          offCtx.beginPath();
-          offCtx.rect(0, 0, LOGIC_WIDTH, LOGIC_HEIGHT);
-          offCtx.arc(safeX, safeY, radius, 0, Math.PI * 2, true);
-          offCtx.fill('evenodd');
-
-          // Glowing soft rim ring around spotlight
-          offCtx.strokeStyle = 'rgba(222, 208, 149, 0.55)';
-          offCtx.lineWidth = 1;
-          offCtx.beginPath();
-          offCtx.arc(safeX, safeY, radius, 0, Math.PI * 2);
-          offCtx.stroke();
-        } else {
-          // General dimness without circular mask (call_warning)
-          offCtx.fillStyle = `rgba(9, 13, 22, ${Math.min(1, Math.max(0, curDim))})`;
-          offCtx.fillRect(0, 0, LOGIC_WIDTH, LOGIC_HEIGHT);
-        }
-        offCtx.restore();
-      }
-
-      // 3. TUTORIAL DIALOGUE BOX (Manager Portrait + Typewriter Audio)
-      const curTut = tutorialStageRef.current;
-      if (curTut === 'spotlight_tent') {
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS (CAMP OVERVIEW)',
-          TUTORIAL_TEXT_TENT,
-          tutCharCountRef.current,
-          tutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      } else if (curTut === 'spotlight_armory') {
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS (ARMORY INSPECTION)',
-          TUTORIAL_TEXT_ARMORY,
-          tutCharCountRef.current,
-          tutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      } else if (curTut === 'call_warning') {
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS (ARENA SUMMONS WARNING)',
-          TUTORIAL_TEXT_WARNING,
-          tutCharCountRef.current,
-          tutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      }
-
-      // 4. POST-FIRST-BATTLE ONBOARDING DIALOGUE BOX
-      const curPost = postBattleStageRef.current;
-      if (curPost === 'recruits_dialogue_1') {
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS (FIRST VICTORY SPOILS)',
-          POST_BATTLE_TEXT_1,
-          postTutCharCountRef.current,
-          postTutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      } else if (curPost === 'recruits_dialogue_2') {
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS (CAMP RECUPERATION)',
-          POST_BATTLE_TEXT_2,
-          postTutCharCountRef.current,
-          postTutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      } else if (curPost === 'dummy_spotlight_1') {
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS (SPARRING GROUNDS)',
-          DUMMY_TEXT_1,
-          postTutCharCountRef.current,
-          postTutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      } else if (curPost === 'dummy_spotlight_2') {
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS (THE ARENA HUNGER)',
-          DUMMY_TEXT_2,
-          postTutCharCountRef.current,
-          postTutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      } else if (curPost === 'tent_spotlight') {
-        drawManagerTutorialBox(
-          offCtx,
-          'CAMP OVERVIEW (RECRUITMENT)',
-          POST_BATTLE_TENT_TEXT,
-          postTutCharCountRef.current,
-          postTutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      } else if (keeperSequenceRef.current && keeperSequenceRef.current.active) {
-        const ks = keeperSequenceRef.current;
-        const curText = KEEPER_POST_FIFTH_PANELS[ks.panelIndex];
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS (GLADIATOR KEEPER)',
-          curText,
-          ks.charCount,
-          ks.isDone,
-          animTimeRef.current,
-        );
-      } else if (isFeastOfferPendingRef.current) {
-        drawManagerTutorialBox(
-          offCtx,
-          'LANISTA AULUS',
-          'These men should eat like kings.',
-          tutCharCountRef.current,
-          tutIsLineDoneRef.current,
-          animTimeRef.current,
-        );
-      }
-    } else if (mode === 'podium') {
-      // 2. PODIUM VIEW: 5-Stage Monumental Roman Staircase with Winning Gladiators & Fire Ignition
-      const newlyWonTier = Math.max(0, unlockedTierIndex - 1);
-      const gladsToDraw =
-        podiumGladiatorsRef.current.length > 0
-          ? podiumGladiatorsRef.current
-          : gladiators.filter((g) => g.hp > 0).slice(0, 3);
-
-        drawRomanPodiumScreen(
-        offCtx,
-        unlockedTierIndex,
-        animTimeRef.current,
-        gladsToDraw,
-        newlyWonTier,
-        podiumTimerRef.current,
-        podiumFlashTimerRef.current,
-      );
-    } else {
-      // 3. ARENA VIEW: Real-time Multi-Fighter Arena Duel (Rome in Flames or Standard Coliseum)
-      const j = judgmentState;
-      const isCinematic = j.active;
-      const panY = isCinematic ? j.cameraPanY : 0;
-      const posture = j.phase === 'verdict' ? j.verdict : 'standing';
-
-      offCtx.save();
-      if (isCinematic) {
-        offCtx.translate(0, panY);
-      }
-
-      const curTier = activeTierRef.current;
-      if (isSandboxBattleRef.current || curTier?.mapTheme === 'rome_flames') {
-        drawRomeInFlamesBackground(offCtx, animTimeRef.current || 0);
-      } else if (curTier?.mapTheme === 'river_rubicon' || curTier?.mapTheme === 'gallic_crossing') {
-        drawRiverValleyBackground(offCtx, curTier?.fortifications, animTimeRef.current || 0);
-      } else if (curTier?.mapTheme === 'alpine_rampart') {
-        drawAlpineRampartBackground(offCtx, curTier?.fortifications, animTimeRef.current || 0);
-      } else if (curTier?.mapTheme === 'camp_defense') {
-        drawCampSkyAndWalls(offCtx, animTimeRef.current || 0, Math.min(5, unlockedTierIndex), 0);
-        drawCampCourtyardProps(offCtx, null, animTimeRef.current || 0, ludusUpgrades);
-      } else {
-        const isBossOrSpec = isEmperorDuelRef.current || isSandboxBattleRef.current || !!curTier?.isBoss;
-        const currentCrowdTier = getCrowdTier(unlockedTierIndex, totalBattlesWonRef.current, isBossOrSpec);
-        drawCleanArenaBackground(
-          offCtx,
-          posture,
-          isEmperorDuelRef.current,
-          curTier?.mapTheme || 'standard',
-          curTier?.fortifications,
-          animTimeRef.current || 0,
-          currentCrowdTier,
-        );
-      }
-
-      const fighters = arenaFightersRef.current;
-
-      // Draw all arena combatants sorted by Y for correct isometric depth
-      const sortedFighters = [...fighters].sort((a, b) => a.y - b.y);
-
-      for (const fighter of sortedFighters) {
-        const isDeadFighter = fighter.hp <= 0 || fighter.isDead || fighter.state === 'death';
-        const effectiveState = isDeadFighter ? 'death' : fighter.state;
-
-        const isExecutioner =
-          judgmentState.active &&
-          (judgmentState.phase === 'execution_strike' || judgmentState.phase === 'execution_settle') &&
-          fighter.id === judgmentState.executionerId;
-
-        const execStance = isExecutioner
-          ? {
-              isExecutioner: true,
-              strikeProgress: judgmentState.execStrikeProgress ?? 0,
-            }
-          : undefined;
-
-        drawCulturalGladiator(
-          offCtx,
-          fighter.x,
-          fighter.y,
-          fighter.culture,
-          effectiveState,
-          fighter.flipX,
-          fighter.animTimer,
-          fighter.flashWhiteTimer,
-          fighter.deathTimer,
-          fighter.rageTimer,
-          fighter.level,
-          fighter.equipped,
-          fighter.isCavalry,
-          fighter.isElephant,
-          isDeadFighter ? false : fighter.isCharging,
-          isDeadFighter ? 0 : (fighter.stunTimer || 0),
-          fighter.isEmperor,
-          fighter.heroType,
-          execStance,
-          isDeadFighter,
-        );
-      }
-
-      // Draw Ranged Projectiles (Javelins, Steppe Arrows, Sling Stones, Bolts, Piercing Tridents)
-      projectilesRef.current.forEach((proj) => {
-        offCtx.save();
-        offCtx.translate(Math.round(proj.x), Math.round(proj.y));
-        const rot = Math.atan2(proj.vy, proj.vx);
-        offCtx.rotate(rot);
-
-        if (proj.isStone) {
-          // Sling stone projectile
-          offCtx.fillStyle = PALETTE[5];
-          offCtx.fillRect(-2, -2, 4, 4);
-          offCtx.fillStyle = PALETTE[10];
-          offCtx.fillRect(-1, -1, 3, 3);
-          offCtx.fillStyle = PALETTE[11];
-          offCtx.fillRect(0, 0, 1, 1);
-        } else if (proj.isBolt) {
-          // Crossbow bolt
-          offCtx.fillStyle = PALETTE[14];
-          offCtx.fillRect(-5, -1, 9, 2);
-          offCtx.fillStyle = PALETTE[11]; // iron head
-          offCtx.fillRect(4, -1, 4, 2);
-          offCtx.fillStyle = PALETTE[0]; // gleaming tip
-          offCtx.fillRect(8, 0, 1, 1);
-          offCtx.fillStyle = PALETTE[3]; // crimson fletching
-          offCtx.fillRect(-6, -2, 3, 4);
-        } else if (proj.isPiercingTrident) {
-          // Fuscina de Venator Throwing Trident (Piercing)
-          offCtx.fillStyle = PALETTE[14]; // wood shaft
-          offCtx.fillRect(-10, -1, 16, 2);
-          offCtx.fillStyle = PALETTE[15]; // bronze socket
-          offCtx.fillRect(6, -2, 2, 5);
-          offCtx.fillStyle = PALETTE[11]; // three barbed prongs
-          offCtx.fillRect(8, -3, 6, 1);
-          offCtx.fillRect(8, 0, 7, 1);
-          offCtx.fillRect(8, 3, 6, 1);
-          offCtx.fillStyle = PALETTE[0]; // gleaming tips
-          offCtx.fillRect(14, -3, 2, 1);
-          offCtx.fillRect(15, 0, 2, 1);
-          offCtx.fillRect(14, 3, 2, 1);
-          // Piercing kinetic trail
-          offCtx.fillStyle = 'rgba(222, 208, 149, 0.6)';
-          offCtx.fillRect(-14, -1, 4, 2);
-        } else {
-          // Steppe lance / javelin or arrow
-          offCtx.fillStyle = PALETTE[14]; // wood shaft
-          offCtx.fillRect(-7, -1, 14, 2);
-          offCtx.fillStyle = PALETTE[11]; // steel head
-          offCtx.fillRect(5, -1, 4, 2);
-          offCtx.fillStyle = PALETTE[0]; // gleaming tip
-          offCtx.fillRect(9, 0, 1, 1);
-
-          if (proj.isCrit) {
-            offCtx.fillStyle = PALETTE[15]; // critical gold trail
-            offCtx.fillRect(-9, -1, 2, 2);
-          }
-        }
-        offCtx.restore();
-      });
-
-      // Render Stylized White Pixel Slash VFX & Blade Clash
-      slashVfxRef.current.forEach((slash) => {
-        offCtx.save();
-        offCtx.translate(slash.x, slash.y);
-        offCtx.rotate(slash.angle);
-
-        if (slash.isClash) {
-          // Crossed / clashing dual-slash spark VFX
-          offCtx.fillStyle = '#ffffff';
-          offCtx.fillRect(-9, -1, 18, 2);
-          offCtx.fillRect(-6, -3, 12, 2);
-          offCtx.fillRect(-2, -5, 4, 2);
-          offCtx.fillStyle = '#F7DEAA';
-          offCtx.fillRect(-1, -9, 2, 18);
-          offCtx.fillRect(-3, -6, 2, 12);
-          offCtx.fillRect(-5, -2, 2, 4);
-          // Central brilliant clash spark
-          offCtx.fillStyle = '#ffffff';
-          offCtx.fillRect(-2, -2, 4, 4);
-          offCtx.fillStyle = PALETTE[0];
-          offCtx.fillRect(-4, -4, 2, 2);
-          offCtx.fillRect(2, 2, 2, 2);
-          offCtx.fillRect(2, -4, 2, 2);
-          offCtx.fillRect(-4, 2, 2, 2);
-        } else {
-          // Sharp, stylized white pixel arc / slash effect (#ffffff / #F7DEAA) for 2 frames
-          offCtx.fillStyle = '#ffffff';
-          offCtx.fillRect(-8, -1, 16, 2);
-          offCtx.fillRect(-5, -2, 10, 2);
-          offCtx.fillRect(-2, -3, 5, 2);
-          offCtx.fillStyle = '#F7DEAA';
-          offCtx.fillRect(-7, 1, 14, 1);
-          offCtx.fillRect(-4, -4, 2, 1);
-          offCtx.fillRect(2, -4, 2, 1);
-        }
-        offCtx.restore();
-      });
-
-      // Advance framesLeft for 2-frame slash rendering
-      slashVfxRef.current = slashVfxRef.current
-        .map((s) => ({ ...s, framesLeft: s.framesLeft - 1 }))
-        .filter((s) => s.framesLeft > 0);
-
-      offCtx.restore();
-
-      // EMPEROR'S JUDGMENT CINEMATIC OVERLAYS (Phase 2 Eye Cut-In, Phase 3 Flash & Verdict Banner)
-      if (isCinematic) {
-        const now = getSafeNow();
-        const elapsed = Math.max(0, (now - j.startTime) / 1000);
-
-        if (j.phase === 'eye_cut_in') {
-          const eyeTime = Math.max(0, elapsed - 6.0);
-          drawEyeCutIn(offCtx, eyeTime);
-        } else if (j.phase === 'flash') {
-          const flashProgress = Math.max(0, Math.min(1, (elapsed - 8.2) / 0.2));
-          offCtx.save();
-          offCtx.fillStyle = '#FFFFFF';
-          offCtx.globalAlpha = 1 - flashProgress;
-          offCtx.fillRect(0, 0, LOGIC_WIDTH, LOGIC_HEIGHT);
-          offCtx.restore();
-        } else if (j.phase === 'verdict') {
-          // Clean subtle stone pedestal base on canvas; crisp typography rendered in DOM overlay
-          offCtx.save();
-          const isMercy = j.verdict === 'thumbs_up';
-          const bannerY = 150;
-          const bannerW = 220;
-          const bannerX = Math.round((LOGIC_WIDTH - bannerW) / 2);
-
-          offCtx.fillStyle = isMercy ? '#2A1B19' : '#3f1a18';
-          offCtx.fillRect(bannerX, bannerY, bannerW, 24);
-          offCtx.strokeStyle = isMercy ? '#ded095' : '#9e4a42';
-          offCtx.lineWidth = 1;
-          offCtx.strokeRect(bannerX, bannerY, bannerW, 24);
-          offCtx.restore();
-        }
-      }
-    }
-
-    // Draw pixel particles (blood droplets & sparkles)
-    particlesRef.current.forEach((p) => {
-      offCtx.save();
-      const alpha = Math.max(0, p.life / p.maxLife);
-      offCtx.globalAlpha = alpha;
-      offCtx.fillStyle = p.color;
-      offCtx.fillRect(Math.round(p.x), Math.round(p.y), p.size || 1, p.size || 1);
-      offCtx.restore();
-    });
-
-    // Transfer low-res offscreen canvas to main canvas at 4x scale
-    offCtx.restore();
-    prepareCanvas(displayCtx, canvasWidth, canvasHeight);
-    displayCtx.imageSmoothingEnabled = false;
-    displayCtx.drawImage(offscreen, 0, 0, canvasWidth, canvasHeight);
-
-    // ========================================================================
-    // CRISP HIGH-RESOLUTION VECTOR TEXT & OVERLAYS ON DISPLAY CANVAS
-    // Renders overhead names, HP/Stamina bars, and status badges with 100% sharp
-    // vector text, crisp antialiasing and zero blur!
-    // ========================================================================
-    if (mode === 'camp') {
-      displayCtx.save();
-      displayCtx.imageSmoothingEnabled = true;
-
-      // Draw Cultural Grave Epitaph Plaque Tooltip if hovered or clicked
-      const activeGrave = (memorialGraves || []).find(
-        (g) => g && g.id === (hoveredGraveId || selectedGraveId),
-      );
-      if (activeGrave) {
-        const screenGraveX =
-          LOGIC_WIDTH / 2 + ((activeGrave.x || 0) - (camXRef.current || LOGIC_WIDTH / 2)) * (camZoomRef.current || 1);
-        const screenGraveY =
-          LOGIC_HEIGHT / 2 + ((activeGrave.y || 0) - (camYRef.current || LOGIC_HEIGHT / 2)) * (camZoomRef.current || 1);
-        const graveDispX = screenGraveX * PIXEL_SCALE;
-        const graveDispY = (screenGraveY - 28 * (camZoomRef.current || 1)) * PIXEL_SCALE;
-
-        const plaqueW = 280;
-        const plaqueH = 104;
-        let plaqueX = Math.round(graveDispX - plaqueW / 2);
-        plaqueX = Math.max(20, Math.min(canvasWidth - plaqueW - 20, plaqueX));
-        const plaqueY = Math.round(graveDispY - plaqueH);
-
-        displayCtx.save();
-        displayCtx.shadowColor = 'rgba(0, 0, 0, 0.75)';
-        displayCtx.shadowBlur = 12;
-        displayCtx.shadowOffsetY = 4;
-
-        // Plaque background & borders
-        displayCtx.fillStyle = '#574b50';
-        displayCtx.fillRect(plaqueX, plaqueY, plaqueW, plaqueH);
-        displayCtx.shadowColor = 'transparent';
-
-        displayCtx.lineWidth = 2;
-        displayCtx.strokeStyle = '#9c8053';
-        displayCtx.strokeRect(plaqueX, plaqueY, plaqueW, plaqueH);
-        displayCtx.lineWidth = 1;
-        displayCtx.strokeStyle = '#cb9f6b';
-        displayCtx.strokeRect(plaqueX + 3, plaqueY + 3, plaqueW - 6, plaqueH - 6);
-
-        // Header: Memorial title & name
-        const graveName = (activeGrave.name || 'Honored Fallen').toUpperCase();
-        const graveCulture = activeGrave.culture || 'roman';
-        const cultureLabel = CULTURE_LABELS[graveCulture] || 'Roman Murmillo';
-        const graveTitle = activeGrave.title || 'Warrior';
-        const graveBattles = activeGrave.battlesWon || 0;
-        const graveEpitaph = activeGrave.epitaph || 'Honored in eternal remembrance.';
-
-        displayCtx.textAlign = 'left';
-        displayCtx.font = "bold 13px 'Cinzel', Georgia, serif";
-        displayCtx.fillStyle = '#ded095';
-        displayCtx.fillText(`MEMORIAL: ${graveName}`, plaqueX + 12, plaqueY + 20);
-
-        // Subheader: Culture & battles won
-        displayCtx.font = "bold 11px sans-serif";
-        displayCtx.fillStyle = '#cb9f6b';
-        displayCtx.fillText(`${cultureLabel} • ${graveTitle}`, plaqueX + 12, plaqueY + 38);
-
-        displayCtx.font = "11px sans-serif";
-        displayCtx.fillStyle = '#88997a';
-        displayCtx.fillText(`🏆 Battles Won Before Falling: ${graveBattles} Bouts`, plaqueX + 12, plaqueY + 56);
-
-        // Cultural Epitaph quote
-        displayCtx.font = "italic 11px Georgia, serif";
-        displayCtx.fillStyle = '#ded095';
-        displayCtx.fillText(`"${graveEpitaph}"`, plaqueX + 12, plaqueY + 76);
-
-        // Dismiss notice
-        displayCtx.font = "9px sans-serif";
-        displayCtx.fillStyle = '#a4968d';
-        displayCtx.fillText('Eternal honor to the fallen. Click to dismiss.', plaqueX + 12, plaqueY + 94);
-
-        displayCtx.restore();
-      }
-
-      // Interactive Camp Structure Hover Badge (Tent, Weapon Rack, Training Manikin, Trial Bell, Traveling Merchant)
-      const currentHoveredObj = hoveredCampObjectRef.current;
-      if (currentHoveredObj && !activeGrave) {
-        let objWorldX = 64;
-        let objWorldY = 46;
-        let label = 'CAMP TENT • ROSTER (R)';
-        let sub = 'Inspect Gladiators & Recruit';
-
-        if (currentHoveredObj === 'tent') {
-          objWorldX = 64;
-          objWorldY = 46;
-          label = 'CAMP TENT • ROSTER (R)';
-          sub = 'Inspect Gladiators & Recruit';
-        } else if (currentHoveredObj === 'weaponRack') {
-          objWorldX = 175;
-          objWorldY = 68;
-          label = 'WEAPON RACK • ARMORY (U)';
-          sub = 'Upgrade Weapons & Armor';
-        } else if (currentHoveredObj === 'dummy') {
-          objWorldX = 237;
-          objWorldY = 66;
-          label = 'TRAINING MANIKIN • ARENA (B)';
-          sub = 'Enter Coliseum Skirmishes';
-        } else if (currentHoveredObj === 'bell') {
-          objWorldX = 305;
-          objWorldY = 150;
-          label = 'TRIAL BELL • SUMMONS';
-          sub = 'Skip Respite to Next Battle';
-        } else if (currentHoveredObj === 'merchant') {
-          objWorldX = merchantStateRef.current.x;
-          objWorldY = merchantStateRef.current.y - 20;
-          label = 'TRAVELING MERCHANT • CARAVAN BAZAAR';
-          sub = 'Click to Trade Exotic Wares & Relics';
-        } else if (currentHoveredObj === 'stewardess') {
-          objWorldX = 96;
-          objWorldY = 60;
-          label = 'LINEAGE STEWARDESS • BREEDING PENS';
-          sub = 'Click to Inspect Dynastic Bloodlines & Offspring';
-        } else if (currentHoveredObj === 'visitor') {
-          const v = visitorWalkingNpcRef.current?.visitor;
-          objWorldX = visitorWalkingNpcRef.current?.x || 45;
-          objWorldY = (visitorWalkingNpcRef.current?.y || 83) - 24;
-          label = `CAMP VISITOR: ${(v?.name.toUpperCase() || 'VISITOR')}`;
-          sub = `${v?.title || 'Camp Visitor'} • Click to Speak With Visitor`;
-        }
-
-        const screenObjX =
-          LOGIC_WIDTH / 2 + (objWorldX - (camXRef.current || LOGIC_WIDTH / 2)) * (camZoomRef.current || 1);
-        const screenObjY =
-          LOGIC_HEIGHT / 2 + (objWorldY - (camYRef.current || LOGIC_HEIGHT / 2)) * (camZoomRef.current || 1);
-        const dispX = Math.round(screenObjX * PIXEL_SCALE);
-        const dispY = Math.round(screenObjY * PIXEL_SCALE);
-
-        displayCtx.save();
-        displayCtx.textAlign = 'center';
-        displayCtx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-        displayCtx.shadowBlur = 8;
-        displayCtx.shadowOffsetY = 2;
-
-        const tipW = 240;
-        const tipH = 34;
-        const tipX = Math.max(16, Math.min(canvasWidth - tipW - 16, dispX - tipW / 2));
-        const tipY = dispY - tipH - 4;
-
-        displayCtx.fillStyle = '#574b50';
-        displayCtx.fillRect(tipX, tipY, tipW, tipH);
-        displayCtx.shadowColor = 'transparent';
-
-        displayCtx.strokeStyle = '#ded095';
-        displayCtx.lineWidth = 1.5;
-        displayCtx.strokeRect(tipX, tipY, tipW, tipH);
-
-        displayCtx.font = "bold 11px 'Cinzel', Georgia, serif";
-        displayCtx.fillStyle = '#ded095';
-        displayCtx.fillText(label, tipX + tipW / 2, tipY + 14);
-
-        displayCtx.font = "10px sans-serif";
-        displayCtx.fillStyle = '#cb9f6b';
-        displayCtx.fillText(sub, tipX + tipW / 2, tipY + 27);
-
-        displayCtx.restore();
-      }
-
-      // Roman Civilian Courier Urgent Speech Bubble
-      if (courierNpcRef.current.active && courierNpcRef.current.speechTimer > 0) {
-        const c = courierNpcRef.current;
-        const screenLogicX = LOGIC_WIDTH / 2 + (c.x - camXRef.current) * camZoomRef.current;
-        const screenLogicY = LOGIC_HEIGHT / 2 + (c.y - camYRef.current) * camZoomRef.current;
-        const dispX = Math.round(screenLogicX * PIXEL_SCALE);
-        const dispY = Math.round((screenLogicY - 28 * camZoomRef.current) * PIXEL_SCALE);
-
-        displayCtx.save();
-        displayCtx.font = "bold 12px Georgia, serif";
-        const bubbleText = c.speechText;
-        const textWidth = displayCtx.measureText(bubbleText).width;
-        const bubbleW = Math.round(textWidth + 24);
-        const bubbleH = 38;
-        const bubbleX = Math.max(16, Math.min(canvasWidth - bubbleW - 16, dispX - bubbleW / 2));
-        const bubbleY = dispY - bubbleH;
-
-        displayCtx.shadowColor = 'rgba(0, 0, 0, 0.65)';
-        displayCtx.shadowBlur = 8;
-        displayCtx.shadowOffsetY = 3;
-
-        displayCtx.fillStyle = '#ded095';
-        displayCtx.fillRect(bubbleX, bubbleY, bubbleW, bubbleH);
-        displayCtx.shadowColor = 'transparent';
-
-        displayCtx.lineWidth = 2;
-        displayCtx.strokeStyle = '#ba7654';
-        displayCtx.strokeRect(bubbleX, bubbleY, bubbleW, bubbleH);
-
-        displayCtx.textAlign = 'left';
-        displayCtx.font = "bold 9px 'Cinzel', serif";
-        displayCtx.fillStyle = '#9e4a42';
-        displayCtx.fillText('📜 IMPERIAL COURIER', bubbleX + 8, bubbleY + 13);
-
-        displayCtx.font = "bold italic 11px Georgia, serif";
-        displayCtx.fillStyle = '#3f363b';
-        displayCtx.fillText(bubbleText, bubbleX + 8, bubbleY + 28);
-
-        displayCtx.restore();
-      }
-
-      // Ambient Camp Speech Bubbles (Parchment styled, gentle fade out, max 2 concurrent)
-      const activeBubbles = campSpeechBubblesRef.current;
-      for (const bubble of activeBubbles) {
-        let screenLogicX = 0;
-        let screenLogicY = 0;
-
-        const glad = gladiators.find((g) => g.id === bubble.gladiatorId);
-        if (glad && glad.hp > 0 && !glad.hidden) {
-          screenLogicX = LOGIC_WIDTH / 2 + (glad.x - camXRef.current) * camZoomRef.current;
-          screenLogicY = LOGIC_HEIGHT / 2 + (glad.y - camYRef.current) * camZoomRef.current;
-        } else if (bubble.gladiatorId === 'visitor_npc' && visitorWalkingNpcRef.current?.active) {
-          const v = visitorWalkingNpcRef.current;
-          screenLogicX = LOGIC_WIDTH / 2 + (v.x - camXRef.current) * camZoomRef.current;
-          screenLogicY = LOGIC_HEIGHT / 2 + (v.y - camYRef.current) * camZoomRef.current;
-        } else if (bubble.gladiatorId === 'devotee_npc' && devoteeStateRef.current.active) {
-          const d = devoteeStateRef.current;
-          screenLogicX = LOGIC_WIDTH / 2 + (d.x - camXRef.current) * camZoomRef.current;
-          screenLogicY = LOGIC_HEIGHT / 2 + (d.y - camYRef.current) * camZoomRef.current;
-        } else if (bubble.gladiatorId === 'physician_npc' && physicianNpcRef.current.active) {
-          const p = physicianNpcRef.current;
-          screenLogicX = LOGIC_WIDTH / 2 + (p.x - camXRef.current) * camZoomRef.current;
-          screenLogicY = LOGIC_HEIGHT / 2 + (p.y - camYRef.current) * camZoomRef.current;
-        } else if (bubble.gladiatorId === 'merchant_npc' && merchantStateRef.current.active) {
-          const m = merchantStateRef.current;
-          screenLogicX = LOGIC_WIDTH / 2 + (m.x - camXRef.current) * camZoomRef.current;
-          screenLogicY = LOGIC_HEIGHT / 2 + (m.y - camYRef.current) * camZoomRef.current;
-        } else {
-          continue;
-        }
-
-        const dispX = Math.round(screenLogicX * PIXEL_SCALE);
-        const dispY = Math.round((screenLogicY - 32 * camZoomRef.current) * PIXEL_SCALE);
-
-        let alpha = 1.0;
-        if (bubble.timer < 0.8) {
-          alpha = Math.max(0, bubble.timer / 0.8);
-        } else if (bubble.timer > bubble.maxDuration - 0.3) {
-          alpha = Math.max(0, (bubble.maxDuration - bubble.timer) / 0.3);
-        }
-
-        displayCtx.save();
-        displayCtx.globalAlpha = alpha;
-
-        // Measure & wrap text
-        displayCtx.font = "italic 13px Georgia, serif";
-        const maxTextWidth = 190;
-        const words = bubble.text.split(' ');
-        const lines: string[] = [];
-        let currentLine = '';
-
-        for (const word of words) {
-          const testLine = currentLine ? `${currentLine} ${word}` : word;
-          const metrics = displayCtx.measureText(testLine);
-          if (metrics.width > maxTextWidth && currentLine) {
-            lines.push(currentLine);
-            currentLine = word;
-          } else {
-            currentLine = testLine;
-          }
-        }
-        if (currentLine) lines.push(currentLine);
-
-        const lineHeight = 17;
-        let maxMeasuredW = 0;
-        for (const line of lines) {
-          const w = displayCtx.measureText(line).width;
-          if (w > maxMeasuredW) maxMeasuredW = w;
-        }
-
-        const bubbleW = Math.max(130, Math.round(maxMeasuredW + 22));
-        const bubbleH = Math.round(lines.length * lineHeight + 22);
-
-        // Clamp bubble horizontally within canvas bounds
-        let bubbleX = Math.round(dispX - bubbleW / 2);
-        bubbleX = Math.max(16, Math.min(canvasWidth - bubbleW - 16, bubbleX));
-        const bubbleY = Math.round(dispY - bubbleH);
-
-        // Downward pointer arrow pointing toward gladiator's head
-        const arrowTipX = Math.max(bubbleX + 14, Math.min(bubbleX + bubbleW - 14, dispX));
-        const arrowTipY = dispY + 3;
-
-        // Parchment bubble with subtle drop shadow
-        displayCtx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-        displayCtx.shadowBlur = 8;
-        displayCtx.shadowOffsetY = 3;
-
-        const r = 6;
-        displayCtx.beginPath();
-        displayCtx.moveTo(bubbleX + r, bubbleY);
-        displayCtx.lineTo(bubbleX + bubbleW - r, bubbleY);
-        displayCtx.quadraticCurveTo(bubbleX + bubbleW, bubbleY, bubbleX + bubbleW, bubbleY + r);
-        displayCtx.lineTo(bubbleX + bubbleW, bubbleY + bubbleH - r);
-        displayCtx.quadraticCurveTo(bubbleX + bubbleW, bubbleY + bubbleH, bubbleX + bubbleW - r, bubbleY + bubbleH);
-
-        // Pointer arrow downwards
-        displayCtx.lineTo(arrowTipX + 7, bubbleY + bubbleH);
-        displayCtx.lineTo(arrowTipX, arrowTipY);
-        displayCtx.lineTo(arrowTipX - 7, bubbleY + bubbleH);
-
-        displayCtx.lineTo(bubbleX + r, bubbleY + bubbleH);
-        displayCtx.quadraticCurveTo(bubbleX, bubbleY + bubbleH, bubbleX, bubbleY + bubbleH - r);
-        displayCtx.lineTo(bubbleX, bubbleY + r);
-        displayCtx.quadraticCurveTo(bubbleX, bubbleY, bubbleX + r, bubbleY);
-        displayCtx.closePath();
-
-        // Parchment fill
-        displayCtx.fillStyle = '#ded095';
-        displayCtx.fill();
-
-        // Leather border
-        displayCtx.shadowColor = 'transparent';
-        displayCtx.lineWidth = 1.5;
-        displayCtx.strokeStyle = '#7f644b';
-        displayCtx.stroke();
-
-        // Subtle inner gold rim
-        displayCtx.lineWidth = 0.8;
-        displayCtx.strokeStyle = '#cb9f6b';
-        displayCtx.strokeRect(bubbleX + 2, bubbleY + 2, bubbleW - 4, bubbleH - 4);
-
-        // Speaker name header in crimson
-        displayCtx.textAlign = 'left';
-        displayCtx.font = "bold 10px 'Cinzel', Georgia, serif";
-        displayCtx.fillStyle = '#9e4a42';
-        displayCtx.fillText(bubble.speakerName.toUpperCase(), bubbleX + 10, bubbleY + 13);
-
-        // Speech lines in dark charcoal iron
-        displayCtx.font = "italic 12px Georgia, serif";
-        displayCtx.fillStyle = '#3f363b';
-        lines.forEach((line, idx) => {
-          displayCtx.fillText(line, bubbleX + 10, bubbleY + 27 + idx * lineHeight);
-        });
-
-        displayCtx.restore();
-      }
-
-      displayCtx.restore();
-    } else if (mode === 'arena') {
-      if (judgmentState.active) {
-        return; // Suppress combat HUD and vector plates during Emperor's Judgment cinematic
-      }
-      displayCtx.save();
-      displayCtx.imageSmoothingEnabled = true;
-
-      const fighters = arenaFightersRef.current;
-      for (const fighter of fighters) {
-        if (fighter.hp <= 0 && fighter.deathTimer <= 0) continue;
-
-        // Convert logic coordinates (344x192) to high-res display coordinates (1376x768)
-        const dispX = fighter.x * PIXEL_SCALE;
-        const dispY = (fighter.y - 34) * PIXEL_SCALE;
-
-        // Fighter Nameplate
-        displayCtx.font = "bold 13px 'Cinzel', serif";
-        displayCtx.textAlign = 'center';
-        displayCtx.fillStyle = '#090d16';
-        displayCtx.fillText(fighter.name, dispX + 1, dispY - 11);
-        displayCtx.fillStyle = fighter.isPlayerTeam ? '#ded095' : '#cb9f6b';
-        displayCtx.fillText(fighter.name, dispX, dispY - 12);
-
-        // Overhead Health Bar (Crisp Vector - No Stamina Bar, Health Only)
-        const barW = 68;
-        const barH = 7;
-        const barX = dispX - barW / 2;
-        const hpPct = Math.max(0, fighter.hp / fighter.maxHp);
-
-        displayCtx.fillStyle = 'rgba(20, 20, 24, 0.85)';
-        displayCtx.fillRect(barX - 1, dispY - 8, barW + 2, barH + 2);
-        displayCtx.fillStyle = fighter.isPlayerTeam ? '#55796f' : '#9e4a42';
-        displayCtx.fillRect(barX, dispY - 7, Math.round(barW * hpPct), barH);
-        displayCtx.strokeStyle = '#ded095';
-        displayCtx.lineWidth = 1;
-        displayCtx.strokeRect(barX - 1, dispY - 8, barW + 2, barH + 2);
-      }
-
-      // FLOATING ARENA COMBAT SPEECH BUBBLES (Max 2 concurrent, crisp typography, clean fade)
-      const activeArenaBubbles = arenaSpeechBubblesRef.current;
-      for (const bubble of activeArenaBubbles) {
-        const fighter = fighters.find((f) => f.id === bubble.fighterId);
-        if (!fighter || (fighter.hp <= 0 && fighter.deathTimer <= 0)) continue;
-
-        const dispX = Math.round(fighter.x * PIXEL_SCALE);
-        const dispY = Math.round((fighter.y - 46) * PIXEL_SCALE);
-
-        let alpha = 1.0;
-        if (bubble.timer < 0.6) {
-          alpha = Math.max(0, bubble.timer / 0.6);
-        } else if (bubble.timer > bubble.maxDuration - 0.25) {
-          alpha = Math.max(0, (bubble.maxDuration - bubble.timer) / 0.25);
-        }
-
-        displayCtx.save();
-        displayCtx.globalAlpha = alpha;
-
-        // Wrap and measure text
-        displayCtx.font = "italic 12px Georgia, serif";
-        const maxTextWidth = 175;
-        const words = bubble.text.split(' ');
-        const lines: string[] = [];
-        let currentLine = '';
-
-        for (const word of words) {
-          const testLine = currentLine ? `${currentLine} ${word}` : word;
-          const metrics = displayCtx.measureText(testLine);
-          if (metrics.width > maxTextWidth && currentLine) {
-            lines.push(currentLine);
-            currentLine = word;
-          } else {
-            currentLine = testLine;
-          }
-        }
-        if (currentLine) lines.push(currentLine);
-
-        const lineHeight = 16;
-        let maxMeasuredW = 0;
-        for (const line of lines) {
-          const w = displayCtx.measureText(line).width;
-          if (w > maxMeasuredW) maxMeasuredW = w;
-        }
-
-        const bubbleW = Math.max(105, Math.round(maxMeasuredW + 20));
-        const bubbleH = Math.round(lines.length * lineHeight + 20);
-
-        let bubbleX = Math.round(dispX - bubbleW / 2);
-        bubbleX = Math.max(16, Math.min(canvasWidth - bubbleW - 16, bubbleX));
-        const bubbleY = Math.round(dispY - bubbleH);
-
-        const arrowTipX = Math.max(bubbleX + 10, Math.min(bubbleX + bubbleW - 10, dispX));
-        const arrowTipY = dispY + 3;
-
-        // Drop shadow for crisp arena contrast
-        displayCtx.shadowColor = 'rgba(0, 0, 0, 0.65)';
-        displayCtx.shadowBlur = 8;
-        displayCtx.shadowOffsetY = 3;
-
-        // Balloon shape
-        const r = 5;
-        displayCtx.beginPath();
-        displayCtx.moveTo(bubbleX + r, bubbleY);
-        displayCtx.lineTo(bubbleX + bubbleW - r, bubbleY);
-        displayCtx.quadraticCurveTo(bubbleX + bubbleW, bubbleY, bubbleX + bubbleW, bubbleY + r);
-        displayCtx.lineTo(bubbleX + bubbleW, bubbleY + bubbleH - r);
-        displayCtx.quadraticCurveTo(bubbleX + bubbleW, bubbleY + bubbleH, bubbleX + bubbleW - r, bubbleY + bubbleH);
-
-        // Downward pointer arrow
-        displayCtx.lineTo(arrowTipX + 6, bubbleY + bubbleH);
-        displayCtx.lineTo(arrowTipX, arrowTipY);
-        displayCtx.lineTo(arrowTipX - 6, bubbleY + bubbleH);
-
-        displayCtx.lineTo(bubbleX + r, bubbleY + bubbleH);
-        displayCtx.quadraticCurveTo(bubbleX, bubbleY + bubbleH, bubbleX, bubbleY + bubbleH - r);
-        displayCtx.lineTo(bubbleX, bubbleY + r);
-        displayCtx.quadraticCurveTo(bubbleX, bubbleY, bubbleX + r, bubbleY);
-        displayCtx.closePath();
-
-        displayCtx.fillStyle = fighter.isPlayerTeam ? '#ded095' : '#cb9f6b';
-        displayCtx.fill();
-
-        displayCtx.shadowColor = 'transparent';
-        displayCtx.lineWidth = 1.5;
-        displayCtx.strokeStyle = fighter.isPlayerTeam ? '#7f644b' : '#3f363b';
-        displayCtx.stroke();
-
-        // Speaker name header
-        displayCtx.textAlign = 'left';
-        displayCtx.font = "bold 9px 'Cinzel', serif";
-        displayCtx.fillStyle = fighter.isPlayerTeam ? '#9e4a42' : '#3f363b';
-        displayCtx.fillText(bubble.speakerName.toUpperCase(), bubbleX + 9, bubbleY + 12);
-
-        // Dialogue text
-        displayCtx.font = "bold italic 11px Georgia, serif";
-        displayCtx.fillStyle = '#1c1719';
-        lines.forEach((line, idx) => {
-          displayCtx.fillText(line, bubbleX + 9, bubbleY + 24 + idx * lineHeight);
-        });
-
-        displayCtx.restore();
-      }
-
-      displayCtx.restore();
-    }
-
-    // Render Flying Gold Coin Particles on High-Res Display Canvas
-    if (flyingGoldCoinsRef.current.length > 0) {
-      displayCtx.save();
-      displayCtx.imageSmoothingEnabled = true;
-      flyingGoldCoinsRef.current.forEach((coin) => {
-        if (coin.progress <= 0) return;
-        const cx = Math.round(coin.x);
-        const cy = Math.round(coin.y);
-        const s = coin.size;
-
-        // Trailing sparkling flare
-        displayCtx.fillStyle = coin.glowColor;
-        displayCtx.fillRect(cx - 1, cy - 1, 3, 3);
-
-        displayCtx.save();
-        displayCtx.translate(cx, cy);
-        displayCtx.rotate(coin.rotation);
-
-        // Coin shadow & rim
-        displayCtx.fillStyle = '#7f644b';
-        displayCtx.fillRect(-s / 2 - 1, -s / 2 - 1, s + 2, s + 2);
-        // Gold body
-        displayCtx.fillStyle = coin.color;
-        displayCtx.fillRect(-s / 2, -s / 2, s, s);
-        // Radiant center (#F7DEAA)
-        displayCtx.fillStyle = '#F7DEAA';
-        displayCtx.fillRect(-s / 2 + 1, -s / 2 + 1, Math.max(1, s - 2), Math.max(1, s - 2));
-
-        // Specular glint
-        displayCtx.fillStyle = '#ffffff';
-        displayCtx.fillRect(-1, -1, 2, 2);
-
-        displayCtx.restore();
-      });
-      displayCtx.restore();
-    }
+  const renderView: RenderView = {
+    offscreenCanvasRef,
+    screenShakeTimerRef,
+    cinematicStateRef,
+    cinematicPhaseStartTimeRef,
+    typewriterCharCountRef,
+    isTypewriterDoneRef,
+    canvasWidth,
+    canvasHeight,
+    particlesRef,
+    flyingGoldCoinsRef,
+    mode,
+    judgmentState,
+    camZoomRef,
+    camXRef,
+    camYRef,
+    campShootingStarActiveDurationRef,
+    animTimeRef,
+    unlockedTierIndex,
+    campTimeOfDayRef,
+    hoveredCampObject,
+    ludusUpgrades,
+    feastStateRef,
+    feastSlavesRef,
+    etherealSparksRef,
+    memorialGraves,
+    hoveredGraveId,
+    selectedGraveId,
+    physicianNpcRef,
+    merchantStateRef,
+    devoteeStateRef,
+    courierNpcRef,
+    visitorWalkingNpcRef,
+    gladiatorsRef,
+    sparkleTimerRef,
+    campWeatherRef,
+    dimAlphaRef,
+    tutorialStageRef,
+    postBattleStageRef,
+    spotXRef,
+    spotYRef,
+    spotRadiusRef,
+    tutCharCountRef,
+    tutIsLineDoneRef,
+    postTutCharCountRef,
+    postTutIsLineDoneRef,
+    keeperSequenceRef,
+    isFeastOfferPendingRef,
+    podiumGladiatorsRef,
+    podiumTimerRef,
+    podiumFlashTimerRef,
+    activeTierRef,
+    isSandboxBattleRef,
+    isEmperorDuelRef,
+    totalBattlesWonRef,
+    arenaFightersRef,
+    projectilesRef,
+    slashVfxRef,
+    hoveredCampObjectRef,
+    campSpeechBubblesRef,
+    arenaSpeechBubblesRef,
   };
+  const draw = (displayCtx: CanvasRenderingContext2D) => renderFrame(renderView, displayCtx);
 
   const updateRef = useRef(update);
   const drawRef = useRef(draw);
@@ -20113,7 +7646,7 @@ export default function App() {
     }
 
     // 5. Check if clicked near any living gladiator
-    const clickedGlad = gladiators.find((g) => {
+    const clickedGlad = gladiatorsRef.current.find((g) => {
       if (g.hp <= 0) return false;
       const dist = Math.hypot(g.x - worldX, g.y - 12 - worldY);
       return dist < 22;
@@ -20189,8 +7722,7 @@ export default function App() {
             };
             return moved;
           });
-          gladiatorsRef.current = nextGlads;
-          setGladiators(nextGlads);
+          roster.set(nextGlads);
 
           const movedNearest = nextGlads.find((g) => g.id === nearestGlad.id);
           if (movedNearest && minD <= 6) {
@@ -20300,7 +7832,6 @@ export default function App() {
       setHoveredGraveId(hovered ? hovered.id : null);
     }
   };
-
 
 
   const inCamp = mode === 'camp';
@@ -20622,7 +8153,6 @@ export default function App() {
             </div>
           </div>
         )}
-
 
 
         {/* DIEGETIC AUTOSAVE INDICATOR IN CAMP (Wax Seal Icon with Antique Gold Text) */}
@@ -21195,7 +8725,7 @@ export default function App() {
                   </div>
                   <button
                     onClick={() => {
-                      const living = gladiators.filter((g) => g.hp > 0 && g.status === 'Available');
+                      const living = gladiatorsRef.current.filter((g) => g.hp > 0 && g.status === 'Available');
                       const topGlad = [...living].sort((a, b) => b.level - a.level)[0];
                       if (topGlad) setEmperorDuelSelectedGladId(topGlad.id);
                       setIsEmperorDuelModalOpen(true);
@@ -22961,7 +10491,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  const livingChampions = gladiators.filter(
+                  const livingChampions = gladiatorsRef.current.filter(
                     (g) => g.hp > 0 && g.status === 'Available',
                   );
                   const targetId =
@@ -23235,10 +10765,7 @@ export default function App() {
                     disabled={!canAffordRespite}
                     onClick={() => {
                       if (!canAffordRespite) return;
-                      setGameState((prev) => ({
-                        ...prev,
-                        gold: Math.max(0, prev.gold - currentRespiteCost),
-                      }));
+                      economy.debit(currentRespiteCost, {floorAtZero: true});
                       setRespiteCount((prev) => prev + 1);
                       respiteCountRef.current = (respiteCount || 0) + 1;
                       heraldTimerRef.current = 30 * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
@@ -23273,11 +10800,11 @@ export default function App() {
                   // Transition to Mandatory Podium Quest Pre-Battle Deployment Screen
                   setSelectedGladiatorIds((prev) => {
                     const valid = prev.filter((id) =>
-                      gladiators.some((g) => g.id === id && g.status === 'Available' && !g.isOnQuest && g.hp > 0),
+                      gladiatorsRef.current.some((g) => g.id === id && g.status === 'Available' && !g.isOnQuest && g.hp > 0),
                     );
                     if (valid.length > maxTrialSquadLimit) return valid.slice(0, maxTrialSquadLimit);
                     if (valid.length === 0) {
-                      const first = gladiators.find((g) => g.status === 'Available' && !g.isOnQuest && g.hp > 0);
+                      const first = gladiatorsRef.current.find((g) => g.status === 'Available' && !g.isOnQuest && g.hp > 0);
                       return first ? [first.id] : [];
                     }
                     return valid;
@@ -23432,13 +10959,13 @@ export default function App() {
                           // Auto-slice selected squad to strictly obey enemy team size cap
                           setSelectedGladiatorIds((prev) => {
                             const valid = prev.filter((id) =>
-                              gladiators.some((g) => g.id === id && g.hp > 0 && g.status === 'Available'),
+                              gladiatorsRef.current.some((g) => g.id === id && g.hp > 0 && g.status === 'Available'),
                             );
                             if (valid.length > bounty.enemies.length) {
                               return valid.slice(0, bounty.enemies.length);
                             }
                             if (valid.length === 0) {
-                              const firstAvail = gladiators.find((g) => g.hp > 0 && g.status === 'Available');
+                              const firstAvail = gladiatorsRef.current.find((g) => g.hp > 0 && g.status === 'Available');
                               return firstAvail ? [firstAvail.id] : [];
                             }
                             return valid;
@@ -23718,7 +11245,7 @@ export default function App() {
                                   return nextInv;
                                 });
 
-                                const nextGlads = gladiators.map((g) => {
+                                const nextGlads = gladiatorsRef.current.map((g) => {
                                   if (g.id !== glad.id) return g;
                                   return recalculateGladiatorStats({
                                     ...g,
@@ -23728,8 +11255,7 @@ export default function App() {
                                     justEquipped: true,
                                   });
                                 });
-                                gladiatorsRef.current = nextGlads;
-                                setGladiators(nextGlads);
+                                roster.set(nextGlads);
                                 gameAudio.playCrispClick();
                               }}
                               className="bg-[#2A1B19] text-[#ded095] border border-[#7f644b] rounded px-2 py-1 text-xs">
@@ -23772,7 +11298,7 @@ export default function App() {
                                   return nextInv;
                                 });
 
-                                const nextGlads = gladiators.map((g) => {
+                                const nextGlads = gladiatorsRef.current.map((g) => {
                                   if (g.id !== glad.id) return g;
                                   return recalculateGladiatorStats({
                                     ...g,
@@ -23780,8 +11306,7 @@ export default function App() {
                                     justEquipped: true,
                                   });
                                 });
-                                gladiatorsRef.current = nextGlads;
-                                setGladiators(nextGlads);
+                                roster.set(nextGlads);
                                 gameAudio.playCrispClick();
                               }}
                               className="bg-[#2A1B19] text-[#ded095] border border-[#7f644b] rounded px-2 py-1 text-xs">
@@ -23823,10 +11348,7 @@ export default function App() {
                     disabled={!canAffordRespite}
                     onClick={() => {
                       if (!canAffordRespite) return;
-                      setGameState((prev) => ({
-                        ...prev,
-                        gold: Math.max(0, prev.gold - currentRespiteCost),
-                      }));
+                      economy.debit(currentRespiteCost, {floorAtZero: true});
                       setRespiteCount((prev) => prev + 1);
                       respiteCountRef.current = (respiteCount || 0) + 1;
                       heraldTimerRef.current = 30 * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
@@ -24230,10 +11752,7 @@ export default function App() {
                                     disabled={!canAfford}
                                     onClick={() => {
                                       if (!canAfford) return;
-                                      setGameState((prev) => ({
-                                        ...prev,
-                                        gold: prev.gold - weapon.cost,
-                                      }));
+                                      economy.debit(weapon.cost);
                                       setPlayerInventory((prev) => [...prev, weapon.id]);
                                       gameAudio.playCoinPickup();
                                       addCombatLog(`🛒 Purchased ${weapon.name} for ${weapon.cost} Gold into Inventory storage.`, 'neutral');
@@ -24425,7 +11944,7 @@ export default function App() {
                                         onClick={() => {
                                           // Unequip Two-Handed Weapon: Return to player inventory, clear slots, recalculate stats
                                           setPlayerInventory((prev) => [...prev, twoHandedItem.id]);
-                                          const nextGlads = gladiators.map((g) => {
+                                          const nextGlads = gladiatorsRef.current.map((g) => {
                                             if (g.id !== glad.id) return g;
                                             return recalculateGladiatorStats({
                                               ...g,
@@ -24433,8 +11952,7 @@ export default function App() {
                                               justEquipped: true,
                                             });
                                           });
-                                          gladiatorsRef.current = nextGlads;
-                                          setGladiators(nextGlads);
+                                          roster.set(nextGlads);
                                           gameAudio.playCrispClick();
                                         }}
                                         className="px-2.5 py-1 rounded bg-[#3f363b] hover:bg-[#9e4a42] text-[#ded095] hover:text-white border border-[#7f644b] font-bold text-[11px] transition cursor-pointer">
@@ -24476,7 +11994,7 @@ export default function App() {
                                             e.stopPropagation();
                                             // Unequip Right Weapon
                                             setPlayerInventory((prev) => [...prev, rightItem.id]);
-                                            const nextGlads = gladiators.map((g) => {
+                                            const nextGlads = gladiatorsRef.current.map((g) => {
                                               if (g.id !== glad.id) return g;
                                               return recalculateGladiatorStats({
                                                 ...g,
@@ -24484,8 +12002,7 @@ export default function App() {
                                                 justEquipped: true,
                                               });
                                             });
-                                            gladiatorsRef.current = nextGlads;
-                                            setGladiators(nextGlads);
+                                            roster.set(nextGlads);
                                             gameAudio.playCrispClick();
                                           }}
                                           className="text-[#a4968d] hover:text-[#9e4a42] p-1 text-xs font-bold"
@@ -24530,7 +12047,7 @@ export default function App() {
                                             e.stopPropagation();
                                             // Unequip Left Weapon/Shield
                                             setPlayerInventory((prev) => [...prev, leftItem.id]);
-                                            const nextGlads = gladiators.map((g) => {
+                                            const nextGlads = gladiatorsRef.current.map((g) => {
                                               if (g.id !== glad.id) return g;
                                               return recalculateGladiatorStats({
                                                 ...g,
@@ -24538,8 +12055,7 @@ export default function App() {
                                                 justEquipped: true,
                                               });
                                             });
-                                            gladiatorsRef.current = nextGlads;
-                                            setGladiators(nextGlads);
+                                            roster.set(nextGlads);
                                             gameAudio.playCrispClick();
                                           }}
                                           className="text-[#a4968d] hover:text-[#9e4a42] p-1 text-xs font-bold"
@@ -24687,10 +12203,7 @@ export default function App() {
                               disabled={!canAfford}
                               onClick={() => {
                                 if (!canAfford) return;
-                                setGameState((prev) => ({
-                                  ...prev,
-                                  gold: prev.gold - weapon.cost,
-                                }));
+                                economy.debit(weapon.cost);
                                 setPlayerInventory((prev) => [...prev, weapon.id]);
                                 gameAudio.playPowerupChime();
                                 addCombatLog(`🐪 Acquired exotic relic ${weapon.name} from the Caravan Bazaar for ${weapon.cost} Gold!`, 'crit');
@@ -24782,7 +12295,7 @@ export default function App() {
                           if (returnedItem) {
                             const isTwoHand = WEAPON_DATABASE[returnedItem]?.slotType === 'BOTH';
                             setPlayerInventory((prev) => [...prev, returnedItem!]);
-                            const nextGlads = gladiators.map((g) => {
+                            const nextGlads = gladiatorsRef.current.map((g) => {
                               if (g.id !== targetGlad.id) return g;
                               const nextEquipped = isTwoHand
                                 ? { rightHand: null, leftHand: null }
@@ -24795,8 +12308,7 @@ export default function App() {
                                 justEquipped: true,
                               });
                             });
-                            gladiatorsRef.current = nextGlads;
-                            setGladiators(nextGlads);
+                            roster.set(nextGlads);
                           }
 
                           setActiveEquipSelector(null);
@@ -24883,7 +12395,7 @@ export default function App() {
                                 });
 
                                 // 3. Update gladiator equipped state and recalculate active combat stats
-                                const nextGlads = gladiators.map((g) => {
+                                const nextGlads = gladiatorsRef.current.map((g) => {
                                   if (g.id !== targetGlad.id) return g;
                                   let nextEquipped: { rightHand: string | null; leftHand: string | null };
 
@@ -24912,8 +12424,7 @@ export default function App() {
                                   });
                                 });
 
-                                gladiatorsRef.current = nextGlads;
-                                setGladiators(nextGlads);
+                                roster.set(nextGlads);
                                 setActiveEquipSelector(null);
                                 gameAudio.playPowerupChime();
                               }}
@@ -25665,7 +13176,7 @@ export default function App() {
                       disabled={!canSpawn}
                       onClick={() => {
                         if (!canSpawn) return;
-                        const existingCount = gladiators.filter((g) => g.culture === cult).length;
+                        const existingCount = gladiatorsRef.current.filter((g) => g.culture === cult).length;
                         const altNames: Record<Culture, string[]> = {
                           roman: ['Marcus Iron-Fist', 'Titus Spear-Bane', 'Flavius Shield-Breaker', 'Decimus Fortis', 'Lucius Storm-Guard', 'Cassius Blood-Vow', 'Tiberius Iron-Shield'],
                           celt: ['Artur War-Oak', 'Cormac Blood-Blade', 'Eamon Stone-Cleaver', 'Conall Iron-Heart', 'Boran Red-Shield', 'Fergus Wild-Boar', 'Cathal Shadow-Spear'],
@@ -25711,8 +13222,7 @@ export default function App() {
                         };
                         newG = recalculateGladiatorStats(newG);
                         const nextR = [...gladiatorsRef.current, newG];
-                        gladiatorsRef.current = nextR;
-                        setGladiators(nextR);
+                        roster.set(nextR);
                         gameAudio.playLevelUpStinger();
                         gameAudio.playPowerupChime();
                       }}
@@ -25794,8 +13304,7 @@ export default function App() {
                                 };
                                 return recalculateGladiatorStats(upd);
                               });
-                              gladiatorsRef.current = updated;
-                              setGladiators(updated);
+                              roster.set(updated);
 
                               // Also update if currently in arena
                               arenaFightersRef.current = arenaFightersRef.current.map((f) => {
@@ -25870,7 +13379,7 @@ export default function App() {
                   type="button"
                   disabled={gladiators.filter((g) => g.hp > 0).length >= 10}
                   onClick={() => {
-                    if (gladiators.filter((g) => g.hp > 0).length >= 10) return;
+                    if (gladiatorsRef.current.filter((g) => g.hp > 0).length >= 10) return;
                     const hero: Gladiator = recalculateGladiatorStats({
                       ...HERO_BEASTMASTER,
                       id: `hero_beastmaster_${Date.now()}`,
@@ -25884,8 +13393,7 @@ export default function App() {
                       flipX: false,
                     });
                     const next = [...gladiatorsRef.current, hero];
-                    gladiatorsRef.current = next;
-                    setGladiators(next);
+                    roster.set(next);
                     triggerHeroArrival(hero);
                     addCombatLog('🐾 Recruited Numitor the Beastmaster via Debugger!', 'neutral');
                   }}
@@ -25902,7 +13410,7 @@ export default function App() {
                   type="button"
                   disabled={gladiators.filter((g) => g.hp > 0).length >= 10}
                   onClick={() => {
-                    if (gladiators.filter((g) => g.hp > 0).length >= 10) return;
+                    if (gladiatorsRef.current.filter((g) => g.hp > 0).length >= 10) return;
                     const hero: Gladiator = recalculateGladiatorStats({
                       ...HERO_SALADIN,
                       id: `hero_saladin_${Date.now()}`,
@@ -25916,8 +13424,7 @@ export default function App() {
                       flipX: false,
                     });
                     const next = [...gladiatorsRef.current, hero];
-                    gladiatorsRef.current = next;
-                    setGladiators(next);
+                    roster.set(next);
                     triggerHeroArrival(hero);
                     addCombatLog('🌿 Recruited Saladin the Medic via Debugger!', 'neutral');
                   }}
@@ -25934,7 +13441,7 @@ export default function App() {
                   type="button"
                   disabled={gladiators.filter((g) => g.hp > 0).length >= 10}
                   onClick={() => {
-                    if (gladiators.filter((g) => g.hp > 0).length >= 10) return;
+                    if (gladiatorsRef.current.filter((g) => g.hp > 0).length >= 10) return;
                     const hero: Gladiator = recalculateGladiatorStats({
                       ...HERO_ZUZUBU,
                       id: `hero_zuzubu_${Date.now()}`,
@@ -25948,8 +13455,7 @@ export default function App() {
                       flipX: false,
                     });
                     const next = [...gladiatorsRef.current, hero];
-                    gladiatorsRef.current = next;
-                    setGladiators(next);
+                    roster.set(next);
                     triggerHeroArrival(hero);
                     addCombatLog('🐆 Recruited Zuzubu via Debugger!', 'neutral');
                   }}
@@ -25969,7 +13475,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setGameState((prev) => ({ ...prev, gold: prev.gold + 1000 }));
+                  economy.credit(1000);
                   gameAudio.playCoinPickup();
                 }}
                 className="bg-[#3f363b] hover:bg-[#574b50] text-[#ded095] text-xs font-bold px-3 py-1.5 rounded border border-[#7f644b]">
@@ -25983,8 +13489,7 @@ export default function App() {
                     ...g,
                     hp: g.maxHp,
                   }));
-                  gladiatorsRef.current = healed;
-                  setGladiators(healed);
+                  roster.set(healed);
                   arenaFightersRef.current = arenaFightersRef.current.map((f) => ({
                     ...f,
                     hp: f.maxHp,
@@ -26381,8 +13886,7 @@ export default function App() {
                     });
                   });
 
-                  gladiatorsRef.current = updatedGlads;
-                  setGladiators(updatedGlads);
+                  roster.set(updatedGlads);
                   setPepTalkState(null);
 
                   // Launch combat
@@ -26456,7 +13960,7 @@ export default function App() {
                         disabled={!canAfford}
                         onClick={() => {
                           if (!canAfford) return;
-                          setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+                          economy.debit(cost);
                           setLudusUpgrades((prev) => ({ ...prev, trainingGrounds: prev.trainingGrounds + 1 }));
                           gameAudio.playLevelUpStinger();
                         }}
@@ -26502,7 +14006,7 @@ export default function App() {
                         disabled={!canAfford}
                         onClick={() => {
                           if (!canAfford) return;
-                          setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+                          economy.debit(cost);
                           setLudusUpgrades((prev) => ({ ...prev, medicalBay: prev.medicalBay + 1 }));
                           gameAudio.playPowerupChime();
                         }}
@@ -26562,7 +14066,7 @@ export default function App() {
                           disabled={!canAfford}
                           onClick={() => {
                             if (!canAfford) return;
-                            setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+                            economy.debit(cost);
                             setLudusUpgrades((prev) => ({ ...prev, breedingPens: prev.breedingPens + 1 }));
                             gameAudio.playLevelUpStinger();
                           }}
@@ -26776,10 +14280,10 @@ export default function App() {
                   const v = currentVisitor;
                   if (v.cost) {
                     if (gameState.gold < v.cost) return;
-                    setGameState((prev) => ({ ...prev, gold: prev.gold - v.cost! }));
+                    economy.debit(v.cost!);
                   }
                   if (v.reward) {
-                    setGameState((prev) => ({ ...prev, gold: prev.gold + v.reward! }));
+                    economy.credit(v.reward!);
                   }
                   if (v.attributeBoost) {
                     const b = v.attributeBoost;
@@ -26792,8 +14296,7 @@ export default function App() {
                         attributes: updatedA,
                       });
                     });
-                    gladiatorsRef.current = next;
-                    setGladiators(next);
+                    roster.set(next);
                   }
                   if (v.scoutRecruit) {
                     recruitGladiator(v.scoutRecruit);
@@ -27083,6 +14586,5 @@ export default function App() {
 }
 // TEST_END_CHECK_FOUND
 // FOUND_CRLF
-
 
 

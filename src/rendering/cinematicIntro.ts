@@ -4,7 +4,7 @@
 // tslint:disable
 /* eslint-disable */
 
-import {PALETTE, PaletteColor} from './constants';
+import {PALETTE, PaletteColor} from '../../constants';
 import {drawAulusPortrait} from './portraits';
 
 export const INTRO_MONOLOGUE_TEXT =
