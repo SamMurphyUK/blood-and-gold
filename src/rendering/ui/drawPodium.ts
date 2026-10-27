@@ -7,7 +7,7 @@ export type PodiumSceneView = Pick<
   RenderView,
   | 'unlockedTierIndex'
   | 'podiumGladiatorsRef'
-  | 'gladiators'
+  | 'gladiatorsRef'
   | 'animTimeRef'
   | 'podiumTimerRef'
   | 'podiumFlashTimerRef'
@@ -18,7 +18,7 @@ export function drawPodium(view: PodiumSceneView, offCtx: CanvasRenderingContext
   const {
     unlockedTierIndex,
     podiumGladiatorsRef,
-    gladiators,
+    gladiatorsRef,
     animTimeRef,
     podiumTimerRef,
     podiumFlashTimerRef,
@@ -29,7 +29,7 @@ export function drawPodium(view: PodiumSceneView, offCtx: CanvasRenderingContext
   const gladsToDraw =
     podiumGladiatorsRef.current.length > 0
       ? podiumGladiatorsRef.current
-      : gladiators.filter((g) => g.hp > 0).slice(0, 3);
+      : gladiatorsRef.current.filter((g) => g.hp > 0).slice(0, 3);
 
     drawRomanPodiumScreen(
     offCtx,

@@ -994,5 +994,6 @@ export function updateCampGladiators(view: UpdateCampGladiatorsView, dt: number)
     }
   }
 
-  roster.set(updatedCampGlads);
+  // Frame-rate write: ref only. React sees it at the next ~10 Hz flush (or the next discrete roster mutation).
+  roster.tick(updatedCampGlads);
 }

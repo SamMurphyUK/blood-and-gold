@@ -9,7 +9,9 @@ import type {UpdateView} from './view';
 type UpdateGlobalTimersView = Pick<
   UpdateView,
   | 'screenShakeTimerRef'
+  | 'campActionCooldowns'
   | 'setCampActionCooldowns'
+  | 'arenaActionCooldowns'
   | 'setArenaActionCooldowns'
   | 'setDisplayedGold'
   | 'displayedGoldRef'
@@ -23,7 +25,9 @@ type UpdateGlobalTimersView = Pick<
 export function updateGlobalTimers(view: UpdateGlobalTimersView, dt: number) {
   const {
     screenShakeTimerRef,
+    campActionCooldowns,
     setCampActionCooldowns,
+    arenaActionCooldowns,
     setArenaActionCooldowns,
     setDisplayedGold,
     displayedGoldRef,
@@ -112,30 +116,42 @@ export function updateGlobalTimers(view: UpdateGlobalTimersView, dt: number) {
   }
 
   // Decrement Manager Action Bar Cooldowns
-  setCampActionCooldowns((prev) => ({
-    inspire: Math.max(0, prev.inspire - dt),
-    punish: Math.max(0, prev.punish - dt),
-    physician: Math.max(0, prev.physician - dt),
-    study: Math.max(0, prev.study - dt),
-  }));
+  // Stage 3C: only touch React state while something is actually cooling down. Calling the setter every step
+  // with an unchanged value still costs App an extra render after each real one.
+  if (
+    campActionCooldowns.inspire > 0 ||
+    campActionCooldowns.punish > 0 ||
+    campActionCooldowns.physician > 0 ||
+    campActionCooldowns.study > 0
+  ) {
+    setCampActionCooldowns((prev) => ({
+      inspire: Math.max(0, prev.inspire - dt),
+      punish: Math.max(0, prev.punish - dt),
+      physician: Math.max(0, prev.physician - dt),
+      study: Math.max(0, prev.study - dt),
+    }));
+  }
 
-  setArenaActionCooldowns((prev) => ({
-    ...prev,
-    shout: Math.max(0, prev.shout - dt),
-    sand: Math.max(0, prev.sand - dt),
-    stimulant: Math.max(0, prev.stimulant - dt),
-  }));
+  if (arenaActionCooldowns.shout > 0 || arenaActionCooldowns.sand > 0 || arenaActionCooldowns.stimulant > 0) {
+    setArenaActionCooldowns((prev) => ({
+      ...prev,
+      shout: Math.max(0, prev.shout - dt),
+      sand: Math.max(0, prev.sand - dt),
+      stimulant: Math.max(0, prev.stimulant - dt),
+    }));
+  }
 }
 
 type UpdateFloatingEffectsView = Pick<
   UpdateView,
   | 'etherealSparksRef'
+  | 'crispPopups'
   | 'setCrispPopups'
   | 'particlesRef'
 >;
 
 export function updateFloatingEffects(view: UpdateFloatingEffectsView, dt: number) {
-  const {etherealSparksRef, setCrispPopups, particlesRef} = view;
+  const {etherealSparksRef, crispPopups, setCrispPopups, particlesRef} = view;
 
   // Update Floating Particles
   particlesRef.current = particlesRef.current.filter((p) => {
@@ -155,13 +171,15 @@ export function updateFloatingEffects(view: UpdateFloatingEffectsView, dt: numbe
   });
 
   // Update Crisp Vector Popups
-  setCrispPopups((prev) =>
-    prev
-      .map((pop) => ({
-        ...pop,
-        life: pop.life - dt,
-        logicY: pop.logicY - 16 * dt, // Smooth vector float upward
-      }))
-      .filter((pop) => pop.life > 0),
-  );
+  if (crispPopups.length > 0) {
+    setCrispPopups((prev) =>
+      prev
+        .map((pop) => ({
+          ...pop,
+          life: pop.life - dt,
+          logicY: pop.logicY - 16 * dt, // Smooth vector float upward
+        }))
+        .filter((pop) => pop.life > 0),
+    );
+  }
 }

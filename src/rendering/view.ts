@@ -2,7 +2,7 @@
 //
 // RenderView: everything the frame renderer reads from App(). App builds one per render,
 // exactly where the old inner draw() closure used to be, so values behave as the closure did:
-//   - plain values (mode, gladiators, ...) are the state captured by that render
+//   - plain values (mode, ...) are the state captured by that render
 //   - *Ref fields are the live ref objects; the renderer reads `.current` at draw time
 // The view is read-only, with two exceptions that draw() has always written (typed MutableRefView).
 
@@ -77,7 +77,7 @@ export interface RenderView {
   readonly devoteeStateRef: RefView<DevoteeState>;
   readonly courierNpcRef: RefView<CourierNpcState>;
   readonly visitorWalkingNpcRef: RefView<VisitorWalkingNpcState | null>;
-  readonly gladiators: Gladiator[];
+  readonly gladiatorsRef: RefView<Gladiator[]>;
   readonly sparkleTimerRef: RefView<number>;
   readonly campWeatherRef: RefView<"clear" | "rain">;
   readonly dimAlphaRef: RefView<number>;

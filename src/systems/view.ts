@@ -79,8 +79,11 @@ export interface UpdateView {
   readonly visitorWalkingNpcRef: MutableRefObject<VisitorWalkingNpcState | null>;
   readonly setPhysicianNpc: Dispatch<SetStateAction<PhysicianNpcState>>;
   readonly physicianNpcRef: MutableRefObject<PhysicianNpcState>;
+  readonly campActionCooldowns: { inspire: number; punish: number; physician: number; study: number; };
   readonly setCampActionCooldowns: Dispatch<SetStateAction<{ inspire: number; punish: number; physician: number; study: number; }>>;
+  readonly arenaActionCooldowns: { shout: number; sand: number; stimulant: number; retreatUsed: boolean; };
   readonly setArenaActionCooldowns: Dispatch<SetStateAction<{ shout: number; sand: number; stimulant: number; retreatUsed: boolean; }>>;
+  readonly crispPopups: CrispPopup[];
   readonly pepTalkState: { active: boolean; pendingTier: BattleTier | null; isTrial: boolean; addressedGladiatorIds: string[]; talkOutcomes: Record<string, { tone: PepTalkTone; } & PepTalkEvaluation>; } | null;
   readonly unlockedTierIndex: number;
   readonly setIsEmperorDuel: Dispatch<SetStateAction<boolean>>;

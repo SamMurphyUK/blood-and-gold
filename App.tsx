@@ -8,73 +8,26 @@
 // Crisp high-resolution vector UI & notifications overlay, preserving 16-color antiquity palette and character proportions.
 // tslint:disable
 /* eslint-disable */
-import {
-  Activity,
-  ArrowLeft,
-  Clock,
-  HelpCircle,
-  Menu,
-  Pause,
-  Play,
-  RotateCw,
-  Scroll,
-  Shield,
-  Sparkles,
-  Trophy,
-  Volume2,
-  VolumeX,
-  X,
-  Zap,
-} from 'lucide-react';
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {ArrowLeft, Clock, HelpCircle, Menu, Pause, Play, RotateCw, Scroll, Sparkles, Trophy, Volume2, VolumeX, X} from 'lucide-react';
+import React, {useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore} from 'react';
 import {getConfig, PALETTE, PaletteColor, THEME} from './constants';
-import {
-  getPortraitDataUrl,
-  drawPortrait,
-  renderGladiatorHeadshot,
-  getGladiatorHeadshotDataUrl,
-  getNpcPortraitDataUrl,
-  drawAulusPortrait,
-  getAulusPortraitDataUrl,
-} from './src/rendering/portraits';
-import {
-  calculateGladiatorSuccessChance,
-  ActiveQuestExpedition,
-  QuestChoice,
-  QuestNode,
-  QUEST_CHAINS,
-  QUEST_DATABASE,
-  QuestReward,
-  QuestPenalty,
-} from './src/data/quests';
-import {
-  ActiveStoryState,
-  getStoryEventForGladiator,
-  INITIAL_STORY_STATE,
-  STORY_EVENTS,
-} from './src/data/storyEvents';
-import {INTRO_MONOLOGUE_TEXT, drawManagerVnPortrait} from './src/rendering/cinematicIntro';
+import {getPortraitDataUrl, getNpcPortraitDataUrl, getAulusPortraitDataUrl} from './src/rendering/portraits';
+import {calculateGladiatorSuccessChance, ActiveQuestExpedition, QuestNode, QUEST_CHAINS, QUEST_DATABASE, QuestReward, QuestPenalty} from './src/data/quests';
+import {ActiveStoryState, getStoryEventForGladiator, INITIAL_STORY_STATE} from './src/data/storyEvents';
+import {INTRO_MONOLOGUE_TEXT} from './src/rendering/cinematicIntro';
 import {cinematicIntroMusic} from './cinematicIntroAudio';
 import BackgroundMusic from './utils/BackgroundMusic';
-import {
-  createFixedStepper,
-  gameAudio,
-  GameState,
-  MenuOverlay,
-  Overlay,
-  prepareCanvas,
-  useAutoFocus,
-  useIsMobile,
-} from './utils/helper';
+import {createFixedStepper, gameAudio, GameState, MenuOverlay, Overlay, useAutoFocus, useIsMobile} from './utils/helper';
 import {
   usePlayground,
   usePlaygroundGameLifecycle,
 } from './utils/usePlayground';
-import type {Culture, CombatTactics, WeaponDef, PhysicianNpcState, CampSpeechBubble, ArenaSpeechBubble, PersonalityTrait, GladiatorAttributes, PepTalkTone, LudusUpgrades, DynamicVisitor, VisitorWalkingNpcState, EtherealSpark, Gladiator, EnemyTemplate, ArenaMapTheme, SlashVFX, DevoteeState, ArenaFortification, BattleTier, CombatLogEntry, FloatingParticle, CrispPopup, Projectile, MemorialGrave, AftermathData, QuestResolutionModalState, CourierNpcState, CourierNoticeState, BattlefieldLootState, ArenaFighter, HeroArrivalModalState, SideEnemyDef, CampFeastState, FeastSlaveNpc, PepTalkEvaluation, TravelingMerchantState, TutorialStage, PostBattleTutorialStage, JudgmentState, NpcPortraitType, HeroType} from './src/types';
+import type {Culture, CombatTactics, WeaponDef, PhysicianNpcState, CampSpeechBubble, ArenaSpeechBubble, PersonalityTrait, GladiatorAttributes, PepTalkTone, LudusUpgrades, DynamicVisitor, VisitorWalkingNpcState, EtherealSpark, Gladiator, EnemyTemplate, SlashVFX, DevoteeState, BattleTier, CombatLogEntry, FloatingParticle, CrispPopup, Projectile, MemorialGrave, AftermathData, QuestResolutionModalState, CourierNpcState, CourierNoticeState, BattlefieldLootState, ArenaFighter, HeroArrivalModalState, SideEnemyDef, CampFeastState, FeastSlaveNpc, PepTalkEvaluation, TravelingMerchantState, TutorialStage, PostBattleTutorialStage, JudgmentState} from './src/types';
 import {WEAPON_DATABASE} from './src/data/weapons';
 import {TRAIT_DEFINITIONS} from './src/data/traits';
 import {BATTLE_TIERS, EMPEROR_DUEL_TIER, FORTIFIED_QUEST_TEMPLATES} from './src/data/battleTiers';
 import {INITIAL_GLADIATORS} from './src/data/gladiators';
+import {SAVE_KEY, SAVE_SCHEMA, bindRef, resetToInitial, restoreSave, serializeSave, type GladiatorQuestProgress, type SaveBindings} from './src/systems/saveSchema';
 import {HERO_LORE_TALES, HERO_BEASTMASTER, HERO_SALADIN, HERO_ZUZUBU} from './src/data/heroes';
 import {SIDE_FIGHTER_POOL} from './src/data/sideFighters';
 import {TUTORIAL_TEXT_TENT, TUTORIAL_TEXT_ARMORY, TUTORIAL_TEXT_WARNING, POST_BATTLE_TEXT_1, POST_BATTLE_TEXT_2, DUMMY_TEXT_1, DUMMY_TEXT_2, POST_BATTLE_TENT_TEXT} from './src/data/tutorial';
@@ -95,6 +48,7 @@ import type {BattleView} from './src/systems/resolveBattle';
 import type {BattleOutcome} from './src/systems/view';
 import {createRoster} from './src/systems/roster';
 import {buildFighter} from './src/systems/buildFighter';
+import {useHudTick} from './src/systems/useHudTick';
 import type {UpdateView} from './src/systems/view';
 
 
@@ -249,22 +203,6 @@ export const INITIAL_DEVOTEE_STATE: DevoteeState = {
 
 // Escalate fee: 200G -> 400G -> 600G -> 1200G
 export const RESPITE_COST_SCHEDULE = [200, 400, 600, 1200] as const;
-
-export const INITIAL_MEMORIAL_GRAVES: MemorialGrave[] = [
-  {
-    id: 'grave_ancient_founder',
-    gladiatorId: 'ancient_founder',
-    name: 'Aulus the Primus',
-    culture: 'roman',
-    title: 'Honored Founder',
-    battlesWon: 16,
-    epitaph: 'Hic iacet fortis. In aeternum decus legionis.',
-    slotIndex: 0,
-    x: 42,
-    y: 174,
-  },
-];
-
 
 function sumQuestAmount(base?: number, extra?: number): number | undefined {
   const sum = (base || 0) + (extra || 0);
@@ -1382,6 +1320,7 @@ export const INITIAL_JUDGMENT_STATE: JudgmentState = {
 };
 
 // APP_START_LINE
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1428,9 +1367,9 @@ export default function App() {
 
   const [gameState, setGameState] = useState<GameState>({
     status: 'PLAYING',
-    score: 0,
+    score: SAVE_SCHEMA.score.initial(),
     level: 1,
-    gold: getConfig('startingGold') as number,
+    gold: SAVE_SCHEMA.gold.initial(),
   });
 
   // Camp Shooting Star Rare Engine (500 - 1000s or on death of veteran warrior >= lvl 3)
@@ -1456,23 +1395,19 @@ export default function App() {
   const crowdAudioTimerRef = useRef<number>(2.0);
 
   // Ludus Facility Upgrades, Manager Stamina & Renown
-  const [ludusUpgrades, setLudusUpgrades] = useState<LudusUpgrades>({
-    trainingGrounds: 0,
-    medicalBay: 0,
-    breedingPens: 0,
-  });
+  const [ludusUpgrades, setLudusUpgrades] = useState<LudusUpgrades>(SAVE_SCHEMA.ludusUpgrades.initial());
   const [isUpgradesModalOpen, setIsUpgradesModalOpen] = useState<boolean>(false);
   const [managerStamina, setManagerStamina] = useState<number>(100);
   const managerStaminaRef = useRef<number>(100);
   managerStaminaRef.current = managerStamina;
-  const [managerRenown, setManagerRenown] = useState<number>(0);
-  const [speechcraftLevel, setSpeechcraftLevel] = useState<number>(1);
+  const [managerRenown, setManagerRenown] = useState<number>(SAVE_SCHEMA.managerRenown.initial());
+  const [speechcraftLevel, setSpeechcraftLevel] = useState<number>(SAVE_SCHEMA.speechcraftLevel.initial());
   const [isBreedingModalOpen, setIsBreedingModalOpen] = useState<boolean>(false);
   const [selectedParent1Id, setSelectedParent1Id] = useState<string | null>(null);
   const [selectedParent2Id, setSelectedParent2Id] = useState<string | null>(null);
 
   // Feast Mechanics & Third Pedestal Victory Return States
-  const [isFeastUnlocked, setIsFeastUnlocked] = useState<boolean>(false);
+  const [isFeastUnlocked, setIsFeastUnlocked] = useState<boolean>(SAVE_SCHEMA.isFeastUnlocked.initial());
   const isFeastUnlockedRef = useRef<boolean>(false);
   isFeastUnlockedRef.current = isFeastUnlocked;
   const [feastState, setFeastState] = useState<CampFeastState | null>(null);
@@ -1496,7 +1431,7 @@ export default function App() {
   visitorWalkingNpcRef.current = visitorWalkingNpc;
 
   // Manager Action Bars & Cooldowns
-  const [physicianCost, setPhysicianCost] = useState<number>(50);
+  const [physicianCost, setPhysicianCost] = useState<number>(SAVE_SCHEMA.physicianCost.initial());
   const physicianCostRef = useRef<number>(50);
   physicianCostRef.current = physicianCost;
 
@@ -1529,15 +1464,15 @@ export default function App() {
   } | null>(null);
 
   const [mode, setMode] = useState<'camp' | 'arena' | 'podium'>('camp');
-  const [unlockedTierIndex, setUnlockedTierIndex] = useState<number>(0);
-  const [isColiseumChampion, setIsColiseumChampion] = useState<boolean>(false);
-  const [isEmperorEnraged, setIsEmperorEnraged] = useState<boolean>(false);
+  const [unlockedTierIndex, setUnlockedTierIndex] = useState<number>(SAVE_SCHEMA.unlockedTierIndex.initial());
+  const [isColiseumChampion, setIsColiseumChampion] = useState<boolean>(SAVE_SCHEMA.isColiseumChampion.initial());
+  const [isEmperorEnraged, setIsEmperorEnraged] = useState<boolean>(SAVE_SCHEMA.isEmperorEnraged.initial());
   const isEmperorEnragedRef = useRef<boolean>(false);
   isEmperorEnragedRef.current = isEmperorEnraged;
-  const [isEmperorDefeated, setIsEmperorDefeated] = useState<boolean>(false);
+  const [isEmperorDefeated, setIsEmperorDefeated] = useState<boolean>(SAVE_SCHEMA.isEmperorDefeated.initial());
   const isEmperorDefeatedRef = useRef<boolean>(false);
   isEmperorDefeatedRef.current = isEmperorDefeated;
-  const [isRevoltUnlocked, setIsRevoltUnlocked] = useState<boolean>(false);
+  const [isRevoltUnlocked, setIsRevoltUnlocked] = useState<boolean>(SAVE_SCHEMA.isRevoltUnlocked.initial());
   const isRevoltUnlockedRef = useRef<boolean>(false);
   isRevoltUnlockedRef.current = isRevoltUnlocked;
   const [isEmperorDuel, setIsEmperorDuel] = useState<boolean>(false);
@@ -1566,11 +1501,11 @@ export default function App() {
   const pendingPostFifthDialogueRef = useRef<boolean>(false);
 
   // Overall Campaign Chronicles Statistics
-  const [totalRecruited, setTotalRecruited] = useState<number>(1);
+  const [totalRecruited, setTotalRecruited] = useState<number>(SAVE_SCHEMA.totalRecruited.initial());
   const totalRecruitedRef = useRef<number>(1);
   totalRecruitedRef.current = totalRecruited;
 
-  const [totalBattlesWon, setTotalBattlesWon] = useState<number>(0);
+  const [totalBattlesWon, setTotalBattlesWon] = useState<number>(SAVE_SCHEMA.totalBattlesWon.initial());
   const totalBattlesWonRef = useRef<number>(0);
   totalBattlesWonRef.current = totalBattlesWon;
   const [podiumGladiators, setPodiumGladiators] = useState<Gladiator[]>([]);
@@ -1584,7 +1519,7 @@ export default function App() {
   const [judgmentState, setJudgmentState] = useState<JudgmentState>(INITIAL_JUDGMENT_STATE);
   const judgmentStateRef = useRef<JudgmentState>(INITIAL_JUDGMENT_STATE);
   judgmentStateRef.current = judgmentState;
-  const [memorialGraves, setMemorialGraves] = useState<MemorialGrave[]>(INITIAL_MEMORIAL_GRAVES);
+  const [memorialGraves, setMemorialGraves] = useState<MemorialGrave[]>(SAVE_SCHEMA.memorialGraves.initial());
   const [hoveredGraveId, setHoveredGraveId] = useState<string | null>(null);
   const [selectedGraveId, setSelectedGraveId] = useState<string | null>(null);
 
@@ -1603,12 +1538,12 @@ export default function App() {
 
   // Camp Day/Night and Weather State
   const campTimeOfDayRef = useRef<number>(35); // 0 to 120s
-  const [campWeather, setCampWeather] = useState<'clear' | 'rain'>('clear');
+  const [campWeather, setCampWeather] = useState<'clear' | 'rain'>(SAVE_SCHEMA.weather.initial());
   const campWeatherRef = useRef<'clear' | 'rain'>('clear');
   campWeatherRef.current = campWeather;
 
   // Day / Date Counter & Autosave Persistence Engine
-  const [dayCounter, setDayCounter] = useState<number>(1);
+  const [dayCounter, setDayCounter] = useState<number>(SAVE_SCHEMA.day.initial());
   const dayCounterRef = useRef<number>(1);
   dayCounterRef.current = dayCounter;
 
@@ -1618,7 +1553,7 @@ export default function App() {
   const autosaveTimeoutRef = useRef<any>(null);
   const [hasExistingSave, setHasExistingSave] = useState<boolean>(() => {
     try {
-      return typeof localStorage !== 'undefined' && !!localStorage.getItem('gladiator_manager_save');
+      return typeof localStorage !== 'undefined' && !!localStorage.getItem(SAVE_KEY);
     } catch (_) {
       return false;
     }
@@ -1658,7 +1593,7 @@ export default function App() {
   const [isDebugMenuOpen, setIsDebugMenuOpen] = useState(false);
   const [debugSpawnLevel, setDebugSpawnLevel] = useState<number>(1);
 
-  const [firstBattleDone, setFirstBattleDone] = useState<boolean>(false);
+  const [firstBattleDone, setFirstBattleDone] = useState<boolean>(SAVE_SCHEMA.firstBattleDone.initial());
   const firstBattleDoneRef = useRef<boolean>(false);
   firstBattleDoneRef.current = firstBattleDone;
 
@@ -1705,7 +1640,7 @@ export default function App() {
   );
   const [isArmoryModalOpen, setIsArmoryModalOpen] = useState(false);
   const [armoryTab, setArmoryTab] = useState<'armoria' | 'inventory' | 'bazaar'>('armoria');
-  const [playerInventory, setPlayerInventory] = useState<string[]>([]);
+  const [playerInventory, setPlayerInventory] = useState<string[]>(SAVE_SCHEMA.playerInventory.initial());
   const [activeEquipSelector, setActiveEquipSelector] = useState<{
     gladId: string;
     slot: 'RIGHT' | 'LEFT';
@@ -1719,25 +1654,13 @@ export default function App() {
   const [questResolution, setQuestResolution] = useState<QuestResolutionModalState | null>(null);
   const [courierNotice, setCourierNotice] = useState<CourierNoticeState | null>(null);
   const courierTimerRef = useRef<number>(55);
-  const [unlockedChains, setUnlockedChains] = useState<string[]>([
-    'chain_corrupt_senator',
-    'chain_shadow_broker',
-    'chain_priestess_bellona',
-  ]);
+  const [unlockedChains, setUnlockedChains] = useState<string[]>(SAVE_SCHEMA.unlockedChains.initial());
 
   // Unlocked gladiator questline stages for living champions
-  const [unlockedGladiatorQuests, setUnlockedGladiatorQuests] = useState<{
-    gladiatorId: string;
-    chainId: string;
-    nextNodeId: string;
-    stage: number;
-  }[]>([]);
-  const unlockedGladiatorQuestsRef = useRef<{
-    gladiatorId: string;
-    chainId: string;
-    nextNodeId: string;
-    stage: number;
-  }[]>([]);
+  const [unlockedGladiatorQuests, setUnlockedGladiatorQuests] = useState<GladiatorQuestProgress[]>(
+    SAVE_SCHEMA.unlockedGladiatorQuests.initial(),
+  );
+  const unlockedGladiatorQuestsRef = useRef<GladiatorQuestProgress[]>([]);
   unlockedGladiatorQuestsRef.current = unlockedGladiatorQuests;
 
   // Audio toggles
@@ -1781,9 +1704,11 @@ export default function App() {
   activeExpeditionsRef.current = activeExpeditions;
 
   // Starting Roster: Starts with just 1 single gladiator (Valerius Iron-Wall), matching the manager's opening monologue!
-  const [gladiators, setGladiators] = useState<Gladiator[]>([
-    {...INITIAL_GLADIATORS[0]},
-  ]);
+  // The live roster is `gladiatorsRef` (the 60 FPS loop reads and replaces it). React subscribes to it through the
+  // roster store: `gladiators` below only changes on discrete roster mutations and on the ~10 Hz flush.
+  const gladiatorsRef = useRef<Gladiator[]>([{...INITIAL_GLADIATORS[0]}]);
+  const roster = useMemo(() => createRoster(gladiatorsRef), []);
+  const gladiators = useSyncExternalStore(roster.subscribe, roster.getSnapshot);
 
   const [aftermathData, setAftermathData] = useState<AftermathData | null>(null);
   const [selectedCampGladId, setSelectedCampGladId] = useState<string | null>(null);
@@ -1793,17 +1718,7 @@ export default function App() {
   const storyStateRef = useRef<ActiveStoryState>(INITIAL_STORY_STATE);
   storyStateRef.current = storyState;
   const storyCooldownRef = useRef<number>(40 + Math.random() * 20);
-  const [gladiatorBonds, setGladiatorBonds] = useState<Record<string, number>>(() => {
-    const bonds: Record<string, number> = {};
-    const glads = INITIAL_GLADIATORS;
-    for (let i = 0; i < glads.length; i++) {
-      for (let j = i + 1; j < glads.length; j++) {
-        const key = [glads[i].id, glads[j].id].sort().join('__');
-        bonds[key] = 16 + ((i * 3 + j * 5) % 6);
-      }
-    }
-    return bonds;
-  });
+  const [gladiatorBonds, setGladiatorBonds] = useState<Record<string, number>>(SAVE_SCHEMA.bonds.initial);
 
   // Multi-Fighter Squad Selection (Player can select 1 to 3 gladiators)
   const [selectedGladiatorIds, setSelectedGladiatorIds] = useState<string[]>([
@@ -1902,17 +1817,24 @@ export default function App() {
   const matchTimerRef = useRef(0);
   const nextProjId = useRef(1);
 
-  // Sync state refs for loop
-  const gladiatorsRef = useRef(gladiators);
-  gladiatorsRef.current = gladiators;
-
+  // Sync state refs for loop (the roster is not one of them: gladiatorsRef is the source of truth, see above)
   const gameStateRef = useRef(gameState);
   gameStateRef.current = gameState;
 
-  // Narrow write APIs (stable for the life of the component): every gold change goes through `economy`,
-  // every roster change through `roster`. See src/systems/economy.ts and roster.ts.
+  // Narrow write API (stable for the life of the component): every gold change goes through `economy`;
+  // every roster change goes through `roster` (declared with the roster state above).
   const economy = useMemo(() => createEconomy(setGameState), []);
-  const roster = useMemo(() => createRoster(gladiatorsRef, setGladiators), []);
+
+  // ~10 Hz: publish roster changes the 60 FPS camp loop made in the ref, so HP bars and roster lists stay live
+  // without re-rendering React every frame.
+  useEffect(() => {
+    const id = window.setInterval(roster.flush, 100);
+    return () => window.clearInterval(id);
+  }, [roster]);
+
+  // The sandbox telemetry panel reads live fighter counts from arenaFightersRef while rendering, so while a
+  // battle is on screen the HUD re-renders at ~10 Hz.
+  useHudTick(mode === 'arena');
 
   const modeRef = useRef(mode);
   modeRef.current = mode;
@@ -1950,6 +1872,55 @@ export default function App() {
   const unlockedChainsRef = useRef(unlockedChains);
   unlockedChainsRef.current = unlockedChains;
 
+  // Live game <-> save schema (see src/systems/saveSchema.ts). Every persisted field is listed here once: how to read
+  // it and how to write it (state setter + mirror ref). `SaveBindings` is checked against the schema at compile time.
+  // Everything referenced is a ref or a stable setter, so one instance for the life of the component is correct.
+  const saveBindings = useMemo<SaveBindings>(
+    () => ({
+      gold: {
+        get: () => gameStateRef.current.gold,
+        set: (gold) => {
+          setGameState((prev) => ({...prev, gold, status: 'PLAYING'}));
+          setDisplayedGold(gold);
+          displayedGoldRef.current = gold;
+          prevGoldRef.current = gold;
+        },
+      },
+      score: {
+        get: () => gameStateRef.current.score,
+        set: (score) => setGameState((prev) => ({...prev, score})),
+      },
+      day: bindRef(dayCounterRef, setDayCounter),
+      timeOfDay: {
+        get: () => campTimeOfDayRef.current,
+        set: (t) => {
+          campTimeOfDayRef.current = t;
+        },
+      },
+      weather: bindRef(campWeatherRef, setCampWeather),
+      gladiators: {get: () => gladiatorsRef.current, set: (glads) => roster.set(glads)},
+      playerInventory: bindRef(playerInventoryRef, setPlayerInventory),
+      unlockedTierIndex: bindRef(unlockedTierIndexRef, setUnlockedTierIndex),
+      totalBattlesWon: bindRef(totalBattlesWonRef, setTotalBattlesWon),
+      totalRecruited: bindRef(totalRecruitedRef, setTotalRecruited),
+      managerRenown: bindRef(managerRenownRef, setManagerRenown),
+      speechcraftLevel: bindRef(speechcraftLevelRef, setSpeechcraftLevel),
+      ludusUpgrades: bindRef(ludusUpgradesRef, setLudusUpgrades),
+      isFeastUnlocked: bindRef(isFeastUnlockedRef, setIsFeastUnlocked),
+      isColiseumChampion: bindRef(isColiseumChampionRef, setIsColiseumChampion),
+      isEmperorEnraged: bindRef(isEmperorEnragedRef, setIsEmperorEnraged),
+      isEmperorDefeated: bindRef(isEmperorDefeatedRef, setIsEmperorDefeated),
+      isRevoltUnlocked: bindRef(isRevoltUnlockedRef, setIsRevoltUnlocked),
+      bonds: bindRef(gladiatorBondsRef, setGladiatorBonds),
+      physicianCost: bindRef(physicianCostRef, setPhysicianCost),
+      memorialGraves: bindRef(memorialGravesRef, setMemorialGraves),
+      unlockedChains: bindRef(unlockedChainsRef, setUnlockedChains),
+      unlockedGladiatorQuests: bindRef(unlockedGladiatorQuestsRef, setUnlockedGladiatorQuests),
+      firstBattleDone: bindRef(firstBattleDoneRef, setFirstBattleDone),
+    }),
+    [],
+  );
+
   // LocalStorage Persistence Engine
   const triggerAutosave = useCallback((incrementDay = false) => {
     try {
@@ -1959,43 +1930,9 @@ export default function App() {
         setDayCounter(nextDay);
       }
 
-      const gladsToSave = gladiatorsRef.current.map((g) => ({
-        ...g,
-        status: g.status === 'In Arena' ? ('Available' as const) : g.status,
-        questWalkState: 'none' as const,
-        hidden: false,
-      }));
+      const saveData = serializeSave(saveBindings);
 
-      const saveData = {
-        version: 1,
-        timestamp: Date.now(),
-        gold: gameStateRef.current.gold,
-        score: gameStateRef.current.score,
-        day: nextDay,
-        timeOfDay: campTimeOfDayRef.current,
-        weather: campWeatherRef.current,
-        gladiators: gladsToSave,
-        playerInventory: playerInventoryRef.current,
-        unlockedTierIndex: unlockedTierIndexRef.current,
-        totalBattlesWon: totalBattlesWonRef.current,
-        totalRecruited: totalRecruitedRef.current,
-        managerRenown: managerRenownRef.current,
-        speechcraftLevel: speechcraftLevelRef.current,
-        ludusUpgrades: ludusUpgradesRef.current,
-        isFeastUnlocked: isFeastUnlockedRef.current,
-        isColiseumChampion: isColiseumChampionRef.current,
-        isEmperorEnraged: isEmperorEnragedRef.current,
-        isEmperorDefeated: isEmperorDefeatedRef.current,
-        isRevoltUnlocked: isRevoltUnlockedRef.current,
-        bonds: gladiatorBondsRef.current,
-        physicianCost: physicianCostRef.current,
-        memorialGraves: memorialGravesRef.current,
-        unlockedChains: unlockedChainsRef.current,
-        unlockedGladiatorQuests: unlockedGladiatorQuestsRef.current,
-        firstBattleDone: firstBattleDoneRef.current,
-      };
-
-      localStorage.setItem('gladiator_manager_save', JSON.stringify(saveData));
+      localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
       setHasExistingSave(true);
 
       // Trigger diegetic save indicator in camp for 2.5 seconds
@@ -2014,156 +1951,22 @@ export default function App() {
 
   const restoreSavedGame = useCallback((): boolean => {
     try {
-      const raw = localStorage.getItem('gladiator_manager_save');
+      const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (!data || typeof data !== 'object') return false;
 
-      if (typeof data.gold === 'number') {
-        setGameState((prev) => ({
-          ...prev,
-          gold: data.gold,
-          score: typeof data.score === 'number' ? data.score : prev.score,
-          status: 'PLAYING',
-        }));
-        setDisplayedGold(data.gold);
-        displayedGoldRef.current = data.gold;
-        prevGoldRef.current = data.gold;
-      }
+      const restored = restoreSave(saveBindings, data);
 
-      if (typeof data.day === 'number') {
-        const d = Math.max(1, data.day);
-        setDayCounter(d);
-        dayCounterRef.current = d;
-      }
-
-      if (typeof data.timeOfDay === 'number') {
-        campTimeOfDayRef.current = data.timeOfDay;
-      }
-
-      if (data.weather === 'rain' || data.weather === 'clear') {
-        setCampWeather(data.weather);
-        campWeatherRef.current = data.weather;
-      }
-
-      if (Array.isArray(data.gladiators) && data.gladiators.length > 0) {
-        const restored = data.gladiators.map((rawG: any) => {
-          const cleaned: Gladiator = {
-            ...rawG,
-            status: rawG.status === 'In Arena' ? ('Available' as const) : rawG.status,
-            questWalkState: 'none' as const,
-            hidden: false,
-            x: Math.max(38, Math.min(295, rawG.x || 100)),
-            y: Math.max(90, Math.min(166, rawG.y || 120)),
-            targetX: Math.max(38, Math.min(295, rawG.targetX || 100)),
-            targetY: Math.max(90, Math.min(166, rawG.targetY || 120)),
-            state: 'idle',
-            targetActivity: 'idle',
-            hp: Math.max(1, rawG.hp || rawG.maxHp || 150),
-          };
-          return recalculateGladiatorStats(cleaned);
-        });
-        roster.set(restored);
-        const living = restored.filter((g) => g.hp > 0);
+      // Selection follows the restored roster; Lanista stamina is not saved and always starts full.
+      if (restored.includes('gladiators')) {
+        const living = gladiatorsRef.current.filter((g) => g.hp > 0);
         if (living.length > 0) {
           setSelectedGladiatorIds([living[0].id]);
         }
       }
-
-      if (Array.isArray(data.playerInventory)) {
-        setPlayerInventory(data.playerInventory);
-        playerInventoryRef.current = data.playerInventory;
-      }
-
-      if (typeof data.unlockedTierIndex === 'number') {
-        setUnlockedTierIndex(data.unlockedTierIndex);
-        unlockedTierIndexRef.current = data.unlockedTierIndex;
-      }
-
-      if (typeof data.totalBattlesWon === 'number') {
-        setTotalBattlesWon(data.totalBattlesWon);
-        totalBattlesWonRef.current = data.totalBattlesWon;
-      }
-
-      if (typeof data.totalRecruited === 'number') {
-        setTotalRecruited(data.totalRecruited);
-        totalRecruitedRef.current = data.totalRecruited;
-      }
-
-      // Lanista stats: Stamina resets to 100 on load as per specification
       setManagerStamina(100);
       managerStaminaRef.current = 100;
-
-      if (typeof data.managerRenown === 'number') {
-        setManagerRenown(data.managerRenown);
-        managerRenownRef.current = data.managerRenown;
-      }
-
-      if (typeof data.speechcraftLevel === 'number') {
-        setSpeechcraftLevel(data.speechcraftLevel);
-        speechcraftLevelRef.current = data.speechcraftLevel;
-      }
-
-      if (data.ludusUpgrades && typeof data.ludusUpgrades === 'object') {
-        setLudusUpgrades(data.ludusUpgrades);
-        ludusUpgradesRef.current = data.ludusUpgrades;
-      }
-
-      if (typeof data.isFeastUnlocked === 'boolean') {
-        setIsFeastUnlocked(data.isFeastUnlocked);
-        isFeastUnlockedRef.current = data.isFeastUnlocked;
-      }
-
-      if (typeof data.isColiseumChampion === 'boolean') {
-        setIsColiseumChampion(data.isColiseumChampion);
-        isColiseumChampionRef.current = data.isColiseumChampion;
-      }
-
-      if (typeof data.isEmperorEnraged === 'boolean') {
-        setIsEmperorEnraged(data.isEmperorEnraged);
-        isEmperorEnragedRef.current = data.isEmperorEnraged;
-      }
-
-      if (typeof data.isEmperorDefeated === 'boolean') {
-        setIsEmperorDefeated(data.isEmperorDefeated);
-        isEmperorDefeatedRef.current = data.isEmperorDefeated;
-      }
-
-      if (typeof data.isRevoltUnlocked === 'boolean') {
-        setIsRevoltUnlocked(data.isRevoltUnlocked);
-        isRevoltUnlockedRef.current = data.isRevoltUnlocked;
-      }
-
-      if (data.bonds && typeof data.bonds === 'object') {
-        setGladiatorBonds(data.bonds);
-        gladiatorBondsRef.current = data.bonds;
-      }
-
-      if (typeof data.physicianCost === 'number') {
-        const pCost = Math.max(50, data.physicianCost);
-        setPhysicianCost(pCost);
-        physicianCostRef.current = pCost;
-      }
-
-      if (Array.isArray(data.memorialGraves)) {
-        setMemorialGraves(data.memorialGraves);
-        memorialGravesRef.current = data.memorialGraves;
-      }
-
-      if (Array.isArray(data.unlockedChains)) {
-        setUnlockedChains(data.unlockedChains);
-        unlockedChainsRef.current = data.unlockedChains;
-      }
-
-      if (Array.isArray(data.unlockedGladiatorQuests)) {
-        setUnlockedGladiatorQuests(data.unlockedGladiatorQuests);
-        unlockedGladiatorQuestsRef.current = data.unlockedGladiatorQuests;
-      }
-
-      if (typeof data.firstBattleDone === 'boolean') {
-        setFirstBattleDone(data.firstBattleDone);
-        firstBattleDoneRef.current = data.firstBattleDone;
-      }
 
       // Seamless restoration into camp
       cinematicStateRef.current = 4;
@@ -2894,29 +2697,20 @@ export default function App() {
   // Initialize / Restart Campaign
   const initGame = useCallback(() => {
     try {
-      localStorage.removeItem('gladiator_manager_save');
+      localStorage.removeItem(SAVE_KEY);
       setHasExistingSave(false);
     } catch (_) {}
     try {
       cinematicIntroMusic.stop(0.3);
     } catch (_) {}
     setCampMusicKick((n) => n + 1);
-    const startGold = getConfig('startingGold') as number;
     cinematicStateRef.current = 4;
     setCinematicState(4);
-    setGameState({
-      status: 'PLAYING',
-      score: 0,
-      level: 1,
-      gold: startGold,
-    });
-    setDisplayedGold(startGold);
-    displayedGoldRef.current = startGold;
-    prevGoldRef.current = startGold;
+    // Every persisted field goes back to its schema default (src/systems/saveSchema.ts).
+    resetToInitial(saveBindings);
+    setGameState((prev) => ({...prev, level: 1}));
     goldTallyRef.current.isTallying = false;
     flyingGoldCoinsRef.current = [];
-    setDayCounter(1);
-    dayCounterRef.current = 1;
     setMode('camp');
     modeRef.current = 'camp';
     setActiveTier(null);
@@ -2941,9 +2735,6 @@ export default function App() {
     setQuestResolution(null);
     setCourierNotice(null);
     courierTimerRef.current = 55;
-    setUnlockedChains(['chain_corrupt_senator', 'chain_shadow_broker', 'chain_priestess_bellona']);
-    setUnlockedGladiatorQuests([]);
-    unlockedGladiatorQuestsRef.current = [];
     setIsSimPaused(false);
     setSimSpeed(1);
     setCombatLogs([]);
@@ -2952,29 +2743,12 @@ export default function App() {
     arenaFightersRef.current = [];
     particlesRef.current = [];
 
-    const bonds: Record<string, number> = {};
-    const glads = INITIAL_GLADIATORS;
-    for (let i = 0; i < glads.length; i++) {
-      for (let j = i + 1; j < glads.length; j++) {
-        const key = [glads[i].id, glads[j].id].sort().join('__');
-        bonds[key] = 16 + ((i * 3 + j * 5) % 6);
-      }
-    }
-    setGladiatorBonds(bonds);
     lowestHpPctRef.current = {};
     battleRageEventsRef.current = [];
     unbondedDeathsRef.current = [];
     setAftermathData(null);
     setIsBondingModalOpen(false);
     setSelectedCampGladId(null);
-    setUnlockedTierIndex(0);
-    setIsColiseumChampion(false);
-    setIsEmperorEnraged(false);
-    isEmperorEnragedRef.current = false;
-    setIsEmperorDefeated(false);
-    isEmperorDefeatedRef.current = false;
-    setIsRevoltUnlocked(false);
-    isRevoltUnlockedRef.current = false;
     setIsEmperorDuel(false);
     isEmperorDuelRef.current = false;
     setIsEmperorDuelModalOpen(false);
@@ -2984,9 +2758,6 @@ export default function App() {
     podiumTimerRef.current = 0;
     podiumHasIgnitedRef.current = false;
     podiumFlashTimerRef.current = 0;
-    setMemorialGraves(INITIAL_MEMORIAL_GRAVES);
-    setPhysicianCost(50);
-    physicianCostRef.current = 50;
     physicianNpcRef.current = INITIAL_PHYSICIAN_STATE;
     setPhysicianNpc(INITIAL_PHYSICIAN_STATE);
     setBattlefieldLoot(null);
@@ -3001,12 +2772,8 @@ export default function App() {
     visitorTimerRef.current = 25 + Math.random() * 20;
     setIsBanditAlarmOpen(false);
     isBanditRaidRef.current = false;
-    setCampWeather('clear');
-    campWeatherRef.current = 'clear';
-    campTimeOfDayRef.current = 35;
     courierNpcRef.current = INITIAL_COURIER_STATE;
     setCourierNpcState(INITIAL_COURIER_STATE);
-    setPlayerInventory([]);
     setArmoryTab('armoria');
     setActiveEquipSelector(null);
     setHoveredGraveId(null);
@@ -3025,8 +2792,6 @@ export default function App() {
     setTutorialStage('idle');
     tutorialIdleTimerRef.current = 0;
     tutorialWineTimerRef.current = 0;
-    firstBattleDoneRef.current = false;
-    setFirstBattleDone(false);
     postBattleStageRef.current = 'none';
     setPostBattleStage('none');
     postBattleTimerRef.current = 0;
@@ -3063,14 +2828,8 @@ export default function App() {
     setKeeperSequence(null);
     keeperSequenceRef.current = null;
     pendingPostFifthDialogueRef.current = false;
-    setTotalRecruited(1);
-    totalRecruitedRef.current = 1;
-    setTotalBattlesWon(0);
-    totalBattlesWonRef.current = 0;
     setManagerStamina(100);
     managerStaminaRef.current = 100;
-    setIsFeastUnlocked(false);
-    isFeastUnlockedRef.current = false;
     setFeastState(null);
     feastStateRef.current = null;
     setFeastSlaves([]);
@@ -3084,7 +2843,6 @@ export default function App() {
     etherealSparksRef.current = [];
     crowdAudioTimerRef.current = 2.0;
 
-    roster.set([{...INITIAL_GLADIATORS[0]}]);
     setSelectedGladiatorIds([INITIAL_GLADIATORS[0].id]);
 
     if (sdk) {
@@ -7457,8 +7215,11 @@ export default function App() {
     visitorWalkingNpcRef,
     setPhysicianNpc,
     physicianNpcRef,
+    campActionCooldowns,
     setCampActionCooldowns,
+    arenaActionCooldowns,
     setArenaActionCooldowns,
+    crispPopups,
     pepTalkState,
     unlockedTierIndex,
     setIsEmperorDuel,
@@ -7606,7 +7367,7 @@ export default function App() {
     devoteeStateRef,
     courierNpcRef,
     visitorWalkingNpcRef,
-    gladiators,
+    gladiatorsRef,
     sparkleTimerRef,
     campWeatherRef,
     dimAlphaRef,
@@ -7885,7 +7646,7 @@ export default function App() {
     }
 
     // 5. Check if clicked near any living gladiator
-    const clickedGlad = gladiators.find((g) => {
+    const clickedGlad = gladiatorsRef.current.find((g) => {
       if (g.hp <= 0) return false;
       const dist = Math.hypot(g.x - worldX, g.y - 12 - worldY);
       return dist < 22;
@@ -8964,7 +8725,7 @@ export default function App() {
                   </div>
                   <button
                     onClick={() => {
-                      const living = gladiators.filter((g) => g.hp > 0 && g.status === 'Available');
+                      const living = gladiatorsRef.current.filter((g) => g.hp > 0 && g.status === 'Available');
                       const topGlad = [...living].sort((a, b) => b.level - a.level)[0];
                       if (topGlad) setEmperorDuelSelectedGladId(topGlad.id);
                       setIsEmperorDuelModalOpen(true);
@@ -10730,7 +10491,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  const livingChampions = gladiators.filter(
+                  const livingChampions = gladiatorsRef.current.filter(
                     (g) => g.hp > 0 && g.status === 'Available',
                   );
                   const targetId =
@@ -11039,11 +10800,11 @@ export default function App() {
                   // Transition to Mandatory Podium Quest Pre-Battle Deployment Screen
                   setSelectedGladiatorIds((prev) => {
                     const valid = prev.filter((id) =>
-                      gladiators.some((g) => g.id === id && g.status === 'Available' && !g.isOnQuest && g.hp > 0),
+                      gladiatorsRef.current.some((g) => g.id === id && g.status === 'Available' && !g.isOnQuest && g.hp > 0),
                     );
                     if (valid.length > maxTrialSquadLimit) return valid.slice(0, maxTrialSquadLimit);
                     if (valid.length === 0) {
-                      const first = gladiators.find((g) => g.status === 'Available' && !g.isOnQuest && g.hp > 0);
+                      const first = gladiatorsRef.current.find((g) => g.status === 'Available' && !g.isOnQuest && g.hp > 0);
                       return first ? [first.id] : [];
                     }
                     return valid;
@@ -11198,13 +10959,13 @@ export default function App() {
                           // Auto-slice selected squad to strictly obey enemy team size cap
                           setSelectedGladiatorIds((prev) => {
                             const valid = prev.filter((id) =>
-                              gladiators.some((g) => g.id === id && g.hp > 0 && g.status === 'Available'),
+                              gladiatorsRef.current.some((g) => g.id === id && g.hp > 0 && g.status === 'Available'),
                             );
                             if (valid.length > bounty.enemies.length) {
                               return valid.slice(0, bounty.enemies.length);
                             }
                             if (valid.length === 0) {
-                              const firstAvail = gladiators.find((g) => g.hp > 0 && g.status === 'Available');
+                              const firstAvail = gladiatorsRef.current.find((g) => g.hp > 0 && g.status === 'Available');
                               return firstAvail ? [firstAvail.id] : [];
                             }
                             return valid;
@@ -11484,7 +11245,7 @@ export default function App() {
                                   return nextInv;
                                 });
 
-                                const nextGlads = gladiators.map((g) => {
+                                const nextGlads = gladiatorsRef.current.map((g) => {
                                   if (g.id !== glad.id) return g;
                                   return recalculateGladiatorStats({
                                     ...g,
@@ -11537,7 +11298,7 @@ export default function App() {
                                   return nextInv;
                                 });
 
-                                const nextGlads = gladiators.map((g) => {
+                                const nextGlads = gladiatorsRef.current.map((g) => {
                                   if (g.id !== glad.id) return g;
                                   return recalculateGladiatorStats({
                                     ...g,
@@ -12183,7 +11944,7 @@ export default function App() {
                                         onClick={() => {
                                           // Unequip Two-Handed Weapon: Return to player inventory, clear slots, recalculate stats
                                           setPlayerInventory((prev) => [...prev, twoHandedItem.id]);
-                                          const nextGlads = gladiators.map((g) => {
+                                          const nextGlads = gladiatorsRef.current.map((g) => {
                                             if (g.id !== glad.id) return g;
                                             return recalculateGladiatorStats({
                                               ...g,
@@ -12233,7 +11994,7 @@ export default function App() {
                                             e.stopPropagation();
                                             // Unequip Right Weapon
                                             setPlayerInventory((prev) => [...prev, rightItem.id]);
-                                            const nextGlads = gladiators.map((g) => {
+                                            const nextGlads = gladiatorsRef.current.map((g) => {
                                               if (g.id !== glad.id) return g;
                                               return recalculateGladiatorStats({
                                                 ...g,
@@ -12286,7 +12047,7 @@ export default function App() {
                                             e.stopPropagation();
                                             // Unequip Left Weapon/Shield
                                             setPlayerInventory((prev) => [...prev, leftItem.id]);
-                                            const nextGlads = gladiators.map((g) => {
+                                            const nextGlads = gladiatorsRef.current.map((g) => {
                                               if (g.id !== glad.id) return g;
                                               return recalculateGladiatorStats({
                                                 ...g,
@@ -12534,7 +12295,7 @@ export default function App() {
                           if (returnedItem) {
                             const isTwoHand = WEAPON_DATABASE[returnedItem]?.slotType === 'BOTH';
                             setPlayerInventory((prev) => [...prev, returnedItem!]);
-                            const nextGlads = gladiators.map((g) => {
+                            const nextGlads = gladiatorsRef.current.map((g) => {
                               if (g.id !== targetGlad.id) return g;
                               const nextEquipped = isTwoHand
                                 ? { rightHand: null, leftHand: null }
@@ -12634,7 +12395,7 @@ export default function App() {
                                 });
 
                                 // 3. Update gladiator equipped state and recalculate active combat stats
-                                const nextGlads = gladiators.map((g) => {
+                                const nextGlads = gladiatorsRef.current.map((g) => {
                                   if (g.id !== targetGlad.id) return g;
                                   let nextEquipped: { rightHand: string | null; leftHand: string | null };
 
@@ -13415,7 +13176,7 @@ export default function App() {
                       disabled={!canSpawn}
                       onClick={() => {
                         if (!canSpawn) return;
-                        const existingCount = gladiators.filter((g) => g.culture === cult).length;
+                        const existingCount = gladiatorsRef.current.filter((g) => g.culture === cult).length;
                         const altNames: Record<Culture, string[]> = {
                           roman: ['Marcus Iron-Fist', 'Titus Spear-Bane', 'Flavius Shield-Breaker', 'Decimus Fortis', 'Lucius Storm-Guard', 'Cassius Blood-Vow', 'Tiberius Iron-Shield'],
                           celt: ['Artur War-Oak', 'Cormac Blood-Blade', 'Eamon Stone-Cleaver', 'Conall Iron-Heart', 'Boran Red-Shield', 'Fergus Wild-Boar', 'Cathal Shadow-Spear'],
@@ -13618,7 +13379,7 @@ export default function App() {
                   type="button"
                   disabled={gladiators.filter((g) => g.hp > 0).length >= 10}
                   onClick={() => {
-                    if (gladiators.filter((g) => g.hp > 0).length >= 10) return;
+                    if (gladiatorsRef.current.filter((g) => g.hp > 0).length >= 10) return;
                     const hero: Gladiator = recalculateGladiatorStats({
                       ...HERO_BEASTMASTER,
                       id: `hero_beastmaster_${Date.now()}`,
@@ -13649,7 +13410,7 @@ export default function App() {
                   type="button"
                   disabled={gladiators.filter((g) => g.hp > 0).length >= 10}
                   onClick={() => {
-                    if (gladiators.filter((g) => g.hp > 0).length >= 10) return;
+                    if (gladiatorsRef.current.filter((g) => g.hp > 0).length >= 10) return;
                     const hero: Gladiator = recalculateGladiatorStats({
                       ...HERO_SALADIN,
                       id: `hero_saladin_${Date.now()}`,
@@ -13680,7 +13441,7 @@ export default function App() {
                   type="button"
                   disabled={gladiators.filter((g) => g.hp > 0).length >= 10}
                   onClick={() => {
-                    if (gladiators.filter((g) => g.hp > 0).length >= 10) return;
+                    if (gladiatorsRef.current.filter((g) => g.hp > 0).length >= 10) return;
                     const hero: Gladiator = recalculateGladiatorStats({
                       ...HERO_ZUZUBU,
                       id: `hero_zuzubu_${Date.now()}`,

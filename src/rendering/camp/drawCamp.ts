@@ -41,7 +41,7 @@ export type CampSceneView = Pick<
   | 'devoteeStateRef'
   | 'courierNpcRef'
   | 'visitorWalkingNpcRef'
-  | 'gladiators'
+  | 'gladiatorsRef'
   | 'sparkleTimerRef'
   | 'campWeatherRef'
   | 'dimAlphaRef'
@@ -72,7 +72,7 @@ export type CampOverlayView = Pick<
   | 'visitorWalkingNpcRef'
   | 'courierNpcRef'
   | 'campSpeechBubblesRef'
-  | 'gladiators'
+  | 'gladiatorsRef'
   | 'devoteeStateRef'
   | 'physicianNpcRef'
 >;
@@ -100,7 +100,7 @@ export function drawCamp(view: CampSceneView, offCtx: CanvasRenderingContext2D) 
     devoteeStateRef,
     courierNpcRef,
     visitorWalkingNpcRef,
-    gladiators,
+    gladiatorsRef,
     sparkleTimerRef,
     campWeatherRef,
     dimAlphaRef,
@@ -219,7 +219,7 @@ export function drawCamp(view: CampSceneView, offCtx: CanvasRenderingContext2D) 
   }
 
   // Stable Y-sorting with gladiator ID tie-breaker to completely eliminate z-index thrashing
-  const sortedCampGlads = [...(gladiators || [])].sort((a, b) => {
+  const sortedCampGlads = [...(gladiatorsRef.current || [])].sort((a, b) => {
     if (Math.abs(a.y - b.y) > 0.01) return a.y - b.y;
     return a.id.localeCompare(b.id);
   });
@@ -572,7 +572,7 @@ export function drawCampOverlay(view: CampOverlayView, displayCtx: CanvasRenderi
     visitorWalkingNpcRef,
     courierNpcRef,
     campSpeechBubblesRef,
-    gladiators,
+    gladiatorsRef,
     devoteeStateRef,
     physicianNpcRef,
   } = view;
@@ -780,7 +780,7 @@ export function drawCampOverlay(view: CampOverlayView, displayCtx: CanvasRenderi
     let screenLogicX = 0;
     let screenLogicY = 0;
 
-    const glad = gladiators.find((g) => g.id === bubble.gladiatorId);
+    const glad = gladiatorsRef.current.find((g) => g.id === bubble.gladiatorId);
     if (glad && glad.hp > 0 && !glad.hidden) {
       screenLogicX = LOGIC_WIDTH / 2 + (glad.x - camXRef.current) * camZoomRef.current;
       screenLogicY = LOGIC_HEIGHT / 2 + (glad.y - camYRef.current) * camZoomRef.current;
