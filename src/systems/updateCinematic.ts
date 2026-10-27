@@ -124,7 +124,7 @@ type UpdateJudgmentCinematicView = Pick<
   | 'modeRef'
   | 'spawnCrispPopup'
   | 'spawnBloodSpray'
-  | 'finishDuelInternal'
+  | 'resolveBattle'
 >;
 
 export function updateJudgmentCinematic(view: UpdateJudgmentCinematicView, dt: number): boolean {
@@ -136,7 +136,7 @@ export function updateJudgmentCinematic(view: UpdateJudgmentCinematicView, dt: n
     modeRef,
     spawnCrispPopup,
     spawnBloodSpray,
-    finishDuelInternal,
+    resolveBattle,
   } = view;
 
   // 0. EMPEROR'S JUDGMENT CINEMATIC TIMELINE (Post-Battle Cinematic)
@@ -250,7 +250,7 @@ export function updateJudgmentCinematic(view: UpdateJudgmentCinematicView, dt: n
         j.phase = 'done';
         j.cameraPanY = 0;
         setJudgmentState({ ...j });
-        finishDuelInternal(j.isPlayerVictorious, j.verdict, j.isTrial);
+        resolveBattle({kind: 'duel', isVictory: j.isPlayerVictorious, verdict: j.verdict, isTrial: j.isTrial});
         return true;
       }
     }
@@ -309,7 +309,7 @@ export function updateJudgmentCinematic(view: UpdateJudgmentCinematicView, dt: n
           j.active = false;
           j.phase = 'done';
           setJudgmentState({ ...j });
-          finishDuelInternal(j.isPlayerVictorious, j.verdict, j.isTrial);
+          resolveBattle({kind: 'duel', isVictory: j.isPlayerVictorious, verdict: j.verdict, isTrial: j.isTrial});
           return true;
         }
       }
@@ -430,7 +430,7 @@ export function updateJudgmentCinematic(view: UpdateJudgmentCinematicView, dt: n
           j.phase = 'done';
           j.cameraPanY = 0;
           setJudgmentState({ ...j });
-          finishDuelInternal(j.isPlayerVictorious, j.verdict, j.isTrial);
+          resolveBattle({kind: 'duel', isVictory: j.isPlayerVictorious, verdict: j.verdict, isTrial: j.isTrial});
           return true;
         }
       }

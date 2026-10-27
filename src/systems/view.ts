@@ -5,6 +5,8 @@
 
 import type {Dispatch, MutableRefObject, SetStateAction} from 'react';
 import type {GameState} from '../../utils/helper';
+import type {Economy} from './economy';
+import type {Roster} from './roster';
 import type {ActiveQuestExpedition, QuestNode} from '../data/quests';
 import type {ActiveStoryState} from '../data/storyEvents';
 import type {
@@ -35,6 +37,16 @@ import type {
   VisitorWalkingNpcState,
 } from '../types';
 
+/** What ended the battle; resolveBattle (src/systems/resolveBattle.ts) turns this into rewards, bonds and the aftermath. */
+export type BattleOutcome =
+  | {readonly kind: 'sandbox'; readonly isVictory: boolean}
+  | {
+      readonly kind: 'duel';
+      readonly isVictory: boolean;
+      readonly verdict: 'thumbs_up' | 'thumbs_down';
+      readonly isTrial: boolean;
+    };
+
 export interface UpdateView {
   readonly screenShakeTimerRef: MutableRefObject<number>;
   readonly setCinematicState: Dispatch<SetStateAction<number>>;
@@ -44,7 +56,7 @@ export interface UpdateView {
   readonly typewriterCharTimerRef: MutableRefObject<number>;
   readonly isTypewriterDoneRef: MutableRefObject<boolean>;
   readonly emperorStabFiredRef: MutableRefObject<boolean>;
-  readonly setGameState: Dispatch<SetStateAction<GameState>>;
+  readonly economy: Economy;
   readonly campShootingStarTimerRef: MutableRefObject<number>;
   readonly campShootingStarActiveDurationRef: MutableRefObject<number>;
   readonly isManagerMenuOpen: boolean;
@@ -138,7 +150,7 @@ export interface UpdateView {
   readonly activeQuestNodeRef: MutableRefObject<QuestNode | null>;
   readonly questResolutionRef: MutableRefObject<QuestResolutionModalState | null>;
   readonly activeExpeditionsRef: MutableRefObject<ActiveQuestExpedition[]>;
-  readonly setGladiators: Dispatch<SetStateAction<Gladiator[]>>;
+  readonly roster: Roster;
   readonly setStoryState: Dispatch<SetStateAction<ActiveStoryState>>;
   readonly storyStateRef: MutableRefObject<ActiveStoryState>;
   readonly storyCooldownRef: MutableRefObject<number>;
@@ -177,7 +189,6 @@ export interface UpdateView {
   readonly triggerStoryEvent: (gladiatorId?: string, force?: any) => void;
   readonly resolveExpedition: (exp: ActiveQuestExpedition) => void;
   readonly closeAllCampModals: () => void;
-  readonly finishSandboxDuelInternal: (isVictory: boolean) => void;
-  readonly finishDuelInternal: (isVictory: boolean, verdict: "thumbs_up" | "thumbs_down", isTrial: boolean) => void;
+  readonly resolveBattle: (outcome: BattleOutcome) => void;
   readonly stepArenaCombat: (dt: number) => void;
 }

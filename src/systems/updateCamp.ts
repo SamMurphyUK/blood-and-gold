@@ -168,7 +168,7 @@ type UpdateFeastView = Pick<
   | 'feastStateRef'
   | 'setFeastSlaves'
   | 'feastSlavesRef'
-  | 'setGladiators'
+  | 'roster'
   | 'campSpeechBubblesRef'
   | 'gladiatorsRef'
 >;
@@ -179,7 +179,7 @@ export function updateFeast(view: UpdateFeastView, dt: number) {
     feastStateRef,
     setFeastSlaves,
     feastSlavesRef,
-    setGladiators,
+    roster,
     campSpeechBubblesRef,
     gladiatorsRef,
   } = view;
@@ -292,8 +292,7 @@ export function updateFeast(view: UpdateFeastView, dt: number) {
         seatedDuration: 0,
         sitCooldown: 8.0,
       }));
-      gladiatorsRef.current = stoodUp;
-      setGladiators(stoodUp);
+      roster.set(stoodUp);
     } else {
       setFeastState({ ...fs });
     }
@@ -571,7 +570,7 @@ type UpdateCampGladiatorsView = Pick<
   | 'feastStateRef'
   | 'deploymentTierRef'
   | 'isHeraldSummonsOpenRef'
-  | 'setGladiators'
+  | 'roster'
   | 'particlesRef'
   | 'campSpeechBubblesRef'
   | 'gladiatorsRef'
@@ -584,7 +583,7 @@ export function updateCampGladiators(view: UpdateCampGladiatorsView, dt: number)
     feastStateRef,
     deploymentTierRef,
     isHeraldSummonsOpenRef,
-    setGladiators,
+    roster,
     particlesRef,
     campSpeechBubblesRef,
     gladiatorsRef,
@@ -995,6 +994,5 @@ export function updateCampGladiators(view: UpdateCampGladiatorsView, dt: number)
     }
   }
 
-  gladiatorsRef.current = updatedCampGlads;
-  setGladiators(updatedCampGlads);
+  roster.set(updatedCampGlads);
 }

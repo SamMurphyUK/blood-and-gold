@@ -24,7 +24,7 @@ export function updateVisitorTimer(view: UpdateVisitorTimerView, dt: number) {
 
 type UpdateDevoteeView = Pick<
   UpdateView,
-  | 'setGameState'
+  | 'economy'
   | 'setDevoteeState'
   | 'devoteeStateRef'
   | 'campSpeechBubblesRef'
@@ -33,7 +33,7 @@ type UpdateDevoteeView = Pick<
 
 export function updateDevotee(view: UpdateDevoteeView, dt: number) {
   const {
-    setGameState,
+    economy,
     setDevoteeState,
     devoteeStateRef,
     campSpeechBubblesRef,
@@ -65,7 +65,7 @@ export function updateDevotee(view: UpdateDevoteeView, dt: number) {
         if (!d.hasGiftedGold) {
           d.hasGiftedGold = true;
           const giftGold = Math.round((15 + Math.floor(Math.random() * 11)) * 0.8); // 20% reduced devotee tribute
-          setGameState((prev) => ({ ...prev, gold: prev.gold + giftGold }));
+          economy.credit(giftGold);
           gameAudio.playCoinPickup();
           spawnCrispPopup(d.x, d.y - 18, `+${giftGold} Gold (Devotee Tribute)!`, '#fbbf24', true);
           campSpeechBubblesRef.current.push({
@@ -280,7 +280,7 @@ type UpdatePhysicianView = Pick<
   UpdateView,
   | 'setPhysicianNpc'
   | 'physicianNpcRef'
-  | 'setGladiators'
+  | 'roster'
   | 'particlesRef'
   | 'campSpeechBubblesRef'
   | 'gladiatorsRef'
@@ -290,7 +290,7 @@ export function updatePhysician(view: UpdatePhysicianView, dt: number) {
   const {
     setPhysicianNpc,
     physicianNpcRef,
-    setGladiators,
+    roster,
     particlesRef,
     campSpeechBubblesRef,
     gladiatorsRef,
@@ -430,8 +430,7 @@ export function updatePhysician(view: UpdatePhysicianView, dt: number) {
       });
 
       if (anyHealed) {
-        gladiatorsRef.current = updatedGlads;
-        setGladiators(updatedGlads);
+        roster.set(updatedGlads);
       }
     }
 

@@ -26,7 +26,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {getConfig, PALETTE, PaletteColor, THEME} from './constants';
 import {
   getPortraitDataUrl,
@@ -70,7 +70,7 @@ import {
   usePlayground,
   usePlaygroundGameLifecycle,
 } from './utils/usePlayground';
-import type {Culture, CombatTactics, WeaponDef, PhysicianNpcState, CampSpeechBubble, ArenaSpeechBubble, PersonalityTrait, GladiatorAttributes, PepTalkTone, LudusUpgrades, DynamicVisitor, VisitorWalkingNpcState, EtherealSpark, Gladiator, EnemyTemplate, ArenaMapTheme, SlashVFX, DevoteeState, ArenaFortification, BattleTier, CombatLogEntry, FloatingParticle, CrispPopup, Projectile, BondShiftRecord, MemorialGrave, PartyMemberPostBattle, AftermathData, QuestResolutionModalState, CourierNpcState, CourierNoticeState, BattlefieldLootState, ArenaFighter, HeroArrivalModalState, SideEnemyDef, CampFeastState, FeastSlaveNpc, PepTalkEvaluation, TravelingMerchantState, TutorialStage, PostBattleTutorialStage, JudgmentState, NpcPortraitType, HeroType} from './src/types';
+import type {Culture, CombatTactics, WeaponDef, PhysicianNpcState, CampSpeechBubble, ArenaSpeechBubble, PersonalityTrait, GladiatorAttributes, PepTalkTone, LudusUpgrades, DynamicVisitor, VisitorWalkingNpcState, EtherealSpark, Gladiator, EnemyTemplate, ArenaMapTheme, SlashVFX, DevoteeState, ArenaFortification, BattleTier, CombatLogEntry, FloatingParticle, CrispPopup, Projectile, MemorialGrave, AftermathData, QuestResolutionModalState, CourierNpcState, CourierNoticeState, BattlefieldLootState, ArenaFighter, HeroArrivalModalState, SideEnemyDef, CampFeastState, FeastSlaveNpc, PepTalkEvaluation, TravelingMerchantState, TutorialStage, PostBattleTutorialStage, JudgmentState, NpcPortraitType, HeroType} from './src/types';
 import {WEAPON_DATABASE} from './src/data/weapons';
 import {TRAIT_DEFINITIONS} from './src/data/traits';
 import {BATTLE_TIERS, EMPEROR_DUEL_TIER, FORTIFIED_QUEST_TEMPLATES} from './src/data/battleTiers';
@@ -87,8 +87,14 @@ import {CULTURE_DESCRIPTIONS, CULTURE_LABELS} from './src/data/cultures';
 import {LOGIC_WIDTH, LOGIC_HEIGHT} from './src/rendering/primitives';
 import {recalculateGladiatorStats} from './src/logic/gladiatorStats';
 import {toRoman} from './src/logic/roman';
-import {getPodiumCountdownMultiplier} from './src/logic/tiers';
+import {getPodiumCountdownMultiplier, isSpecialNarrativeQuest} from './src/logic/tiers';
 import {updateWorld} from './src/systems/updateWorld';
+import {createEconomy} from './src/systems/economy';
+import {resolveBattle} from './src/systems/resolveBattle';
+import type {BattleView} from './src/systems/resolveBattle';
+import type {BattleOutcome} from './src/systems/view';
+import {createRoster} from './src/systems/roster';
+import {buildFighter} from './src/systems/buildFighter';
 import type {UpdateView} from './src/systems/view';
 
 
@@ -240,19 +246,6 @@ export const INITIAL_DEVOTEE_STATE: DevoteeState = {
   flipX: true,
   speechTimer: 0,
 };
-
-export function isSpecialNarrativeQuest(tier: BattleTier | null): boolean {
-  if (!tier) return false;
-  return (
-    tier.id.startsWith('sandbox_uprising') ||
-    tier.id.startsWith('fortified_') ||
-    tier.isFortifiedQuest === true ||
-    tier.mapTheme === 'rome_flames' ||
-    tier.mapTheme === 'river_rubicon' ||
-    tier.mapTheme === 'alpine_rampart' ||
-    tier.mapTheme === 'gallic_crossing'
-  );
-}
 
 // Escalate fee: 200G -> 400G -> 600G -> 1200G
 export const RESPITE_COST_SCHEDULE = [200, 400, 600, 1200] as const;
@@ -1916,6 +1909,11 @@ export default function App() {
   const gameStateRef = useRef(gameState);
   gameStateRef.current = gameState;
 
+  // Narrow write APIs (stable for the life of the component): every gold change goes through `economy`,
+  // every roster change through `roster`. See src/systems/economy.ts and roster.ts.
+  const economy = useMemo(() => createEconomy(setGameState), []);
+  const roster = useMemo(() => createRoster(gladiatorsRef, setGladiators), []);
+
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
@@ -2065,8 +2063,7 @@ export default function App() {
           };
           return recalculateGladiatorStats(cleaned);
         });
-        setGladiators(restored);
-        gladiatorsRef.current = restored;
+        roster.set(restored);
         const living = restored.filter((g) => g.hp > 0);
         if (living.length > 0) {
           setSelectedGladiatorIds([living[0].id]);
@@ -2246,8 +2243,7 @@ export default function App() {
     );
 
     // Permadeath: Remove gladiator entirely from player roster to immediately free up their slot (Max 5 slots)
-    setGladiators((prev) => prev.filter((g) => g.id !== deadGlad.id));
-    gladiatorsRef.current = gladiatorsRef.current.filter((g) => g.id !== deadGlad.id);
+    roster.remove(deadGlad.id);
     setSelectedGladiatorIds((prev) => prev.filter((id) => id !== deadGlad.id));
 
     setMemorialGraves((prev) => {
@@ -2837,8 +2833,7 @@ export default function App() {
       }
     });
     lastDeployedGladIdsRef.current = [];
-    gladiatorsRef.current = restoredGlads;
-    setGladiators(restoredGlads);
+    roster.set(restoredGlads);
 
     if (
       firstBattleDoneRef.current &&
@@ -3089,7 +3084,7 @@ export default function App() {
     etherealSparksRef.current = [];
     crowdAudioTimerRef.current = 2.0;
 
-    setGladiators([{...INITIAL_GLADIATORS[0]}]);
+    roster.set([{...INITIAL_GLADIATORS[0]}]);
     setSelectedGladiatorIds([INITIAL_GLADIATORS[0].id]);
 
     if (sdk) {
@@ -3103,26 +3098,23 @@ export default function App() {
     setActiveEquipSelector(null);
 
     // Particle Exit Effect: Trigger particle effect in canvas draw loop for any gladiator marked with justEquipped === true
-    setGladiators((prev) => {
-      let anyEquipped = false;
-      const next = prev.map((g) => {
-        if (g.justEquipped) {
-          anyEquipped = true;
-          return {
-            ...g,
-            equipParticleTimer: 2.0,
-          };
-        }
-        return g;
-      });
-      if (anyEquipped) {
-        gameAudio.playPowerupChime();
-      } else {
-        gameAudio.playCrispClick();
+    let anyEquipped = false;
+    const next = gladiatorsRef.current.map((g) => {
+      if (g.justEquipped) {
+        anyEquipped = true;
+        return {
+          ...g,
+          equipParticleTimer: 2.0,
+        };
       }
-      gladiatorsRef.current = next;
-      return next;
+      return g;
     });
+    if (anyEquipped) {
+      gameAudio.playPowerupChime();
+    } else {
+      gameAudio.playCrispClick();
+    }
+    roster.set(next);
   }, []);
 
   const closeArmoryModalRef = useRef(closeArmoryModal);
@@ -3184,8 +3176,7 @@ export default function App() {
       setPlayerInventory((prev) => [...prev, ...oldItemsToReturn]);
     }
 
-    gladiatorsRef.current = updatedGlads;
-    setGladiators(updatedGlads);
+    roster.set(updatedGlads);
     setBattlefieldLoot(null);
     gameAudio.playPowerupChime();
     addCombatLog(
@@ -3576,8 +3567,7 @@ export default function App() {
       };
     });
 
-    gladiatorsRef.current = updatedGlads;
-    setGladiators(updatedGlads);
+    roster.set(updatedGlads);
 
     // Return speech bubble
     if (isAlive) {
@@ -3929,7 +3919,7 @@ export default function App() {
     };
     newGlad = recalculateGladiatorStats(newGlad);
     if (!isFree) {
-      setGameState((prev) => ({...prev, gold: prev.gold - cost}));
+      economy.debit(cost);
     } else {
       setFreeRecruitCultures((prev) => prev.filter((c) => c !== template.culture));
       freeRecruitCulturesRef.current = freeRecruitCulturesRef.current.filter((c) => c !== template.culture);
@@ -3937,8 +3927,7 @@ export default function App() {
     setTotalRecruited((prev) => prev + 1);
     totalRecruitedRef.current += 1;
     const nextRoster = [...gladiatorsRef.current, newGlad];
-    gladiatorsRef.current = nextRoster;
-    setGladiators(nextRoster);
+    roster.set(nextRoster);
 
     // Auto-select recruit into squad if fewer than 3 gladiators selected
     setSelectedGladiatorIds((prev) => {
@@ -4036,12 +4025,11 @@ export default function App() {
       isWalkingIn: true,
     };
     newCav = recalculateGladiatorStats(newCav);
-    setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+    economy.debit(cost);
     setTotalRecruited((prev) => prev + 1);
     totalRecruitedRef.current += 1;
     const nextRoster = [...gladiatorsRef.current, newCav];
-    gladiatorsRef.current = nextRoster;
-    setGladiators(nextRoster);
+    roster.set(nextRoster);
     gameAudio.playLevelUpStinger();
     gameAudio.playCoinPickup();
     addCombatLog('🐎 Recruited Imperial War Horse (350 Gold) from the Beastmaster! Added to warrior roster.', 'neutral');
@@ -4094,12 +4082,11 @@ export default function App() {
       isWalkingIn: true,
     };
     newElephant = recalculateGladiatorStats(newElephant);
-    setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+    economy.debit(cost);
     setTotalRecruited((prev) => prev + 1);
     totalRecruitedRef.current += 1;
     const nextRoster = [...gladiatorsRef.current, newElephant];
-    gladiatorsRef.current = nextRoster;
-    setGladiators(nextRoster);
+    roster.set(nextRoster);
     gameAudio.playElephantTrumpet();
     gameAudio.playCoinPickup();
     addCombatLog('🐘 Recruited Carthaginian War Elephant (800 Gold) from the Beastmaster! Added to warrior roster.', 'neutral');
@@ -4110,28 +4097,25 @@ export default function App() {
     const cost = getConfig('armoryUpgradeCostBase') as number;
     if (gameState.gold < cost) return;
 
-    setGladiators((prev) =>
-      prev.map((g) => {
-        if (g.id !== gladiatorId) return g;
-        if (gearType === 'weapon') {
-          return {
-            ...g,
-            weaponLevel: g.weaponLevel + 1,
-            attack: g.attack + 5,
-          };
-        } else {
-          return {
-            ...g,
-            armorLevel: g.armorLevel + 1,
-            defense: g.defense + 4,
-            maxHp: g.maxHp + 25,
-            hp: g.hp + 25,
-          };
-        }
-      }),
-    );
+    roster.patch(gladiatorId, (g) => {
+      if (gearType === 'weapon') {
+        return {
+          ...g,
+          weaponLevel: g.weaponLevel + 1,
+          attack: g.attack + 5,
+        };
+      } else {
+        return {
+          ...g,
+          armorLevel: g.armorLevel + 1,
+          defense: g.defense + 4,
+          maxHp: g.maxHp + 25,
+          hp: g.hp + 25,
+        };
+      }
+    });
 
-    setGameState((prev) => ({...prev, gold: prev.gold - cost}));
+    economy.debit(cost);
     gameAudio.playLevelUpStinger();
   };
 
@@ -4176,11 +4160,7 @@ export default function App() {
 
         if (choice.rewards) {
           const rw = choice.rewards;
-          setGameState((prev) => ({
-            ...prev,
-            gold: Math.max(0, prev.gold + (rw.gold || 0)),
-            score: prev.score + (rw.gold || 0),
-          }));
+          economy.credit(rw.gold || 0, {floorAtZero: true, addToScore: true});
           if (rw.unlockChain) {
             setUnlockedChains((prev) =>
               prev.includes(rw.unlockChain!) ? prev : [...prev, rw.unlockChain!],
@@ -4219,32 +4199,25 @@ export default function App() {
               animTimer: 0,
               flipX: false,
             };
-            setGladiators((prev) => [...prev, newGlad]);
+            roster.add(newGlad);
             gameAudio.playLevelUpStinger();
           }
           if (glad && rw.heal) {
-            setGladiators((prev) =>
-              prev.map((g) => (g.id === glad.id ? { ...g, hp: Math.min(g.maxHp, g.hp + rw.heal!) } : g)),
-            );
+            roster.patch(glad.id, (g) => ({ ...g, hp: Math.min(g.maxHp, g.hp + rw.heal!) }));
           }
           gameAudio.playCoinPickup();
         }
 
         if (choice.penalty) {
           const pen = choice.penalty;
-          setGameState((prev) => ({
-            ...prev,
-            gold: Math.max(0, prev.gold + (pen.gold || 0)),
-          }));
+          economy.credit(pen.gold || 0, {floorAtZero: true});
           if (glad && pen.damage) {
-            setGladiators((prev) =>
-              prev.map((g) => {
-                if (g.id !== glad.id) return g;
-                const remHp = Math.max(0, g.hp - pen.damage!);
-                if (remHp <= 0) recordGladiatorDeath(g);
-                return { ...g, hp: remHp };
-              }),
-            );
+            const target = gladiatorsRef.current.find((g) => g.id === glad.id);
+            if (target) {
+              const remHp = Math.max(0, target.hp - pen.damage!);
+              if (remHp <= 0) recordGladiatorDeath(target);
+              else roster.patch(target.id, { hp: remHp });
+            }
           }
           gameAudio.playMeleePunch();
         }
@@ -4303,8 +4276,7 @@ export default function App() {
           questWalkTotal: 2.0,
         };
       });
-      gladiatorsRef.current = updatedGlads;
-      setGladiators(updatedGlads);
+      roster.set(updatedGlads);
 
       // Immediately remove dispatched gladiator from squad selection so they do not occupy phantom slots
       setSelectedGladiatorIds((prev) => prev.filter((id) => id !== glad.id));
@@ -4368,11 +4340,7 @@ export default function App() {
 
       // Apply dynamic consequences to Ludus
       if (rewards) {
-        setGameState((prev) => ({
-          ...prev,
-          gold: prev.gold + (rewards.gold || 0),
-          score: prev.score + (rewards.gold || 0),
-        }));
+        economy.credit(rewards.gold || 0, {addToScore: true});
         if (rewards.unlockChain) {
           setUnlockedChains((prev) =>
             prev.includes(rewards.unlockChain!) ? prev : [...prev, rewards.unlockChain!],
@@ -4411,15 +4379,14 @@ export default function App() {
             animTimer: 0,
             flipX: false,
           };
-          setGladiators((prev) => [...prev, newGlad]);
+          // roster.add writes the ref as well as state, so the gladiatorsRef.current.map
+          // below includes the recruit instead of overwriting it.
+          roster.add(newGlad);
         }
       }
 
       if (penalty) {
-        setGameState((prev) => ({
-          ...prev,
-          gold: Math.max(0, prev.gold + (penalty.gold || 0)),
-        }));
+        economy.credit(penalty.gold || 0, {floorAtZero: true});
       }
 
       // Update gladiator status, persistent damage, XP, and permadeath in both ref and state
@@ -4465,8 +4432,7 @@ export default function App() {
         return updatedGladFinal;
       });
 
-      gladiatorsRef.current = updatedList;
-      setGladiators(updatedList);
+      roster.set(updatedList);
 
       // Play audio cue
       if (isSuccess) {
@@ -4526,9 +4492,7 @@ export default function App() {
 
   // Change individual gladiator tactics
   const setGladiatorTactics = (gladId: string, tactics: CombatTactics) => {
-    setGladiators((prev) =>
-      prev.map((g) => (g.id === gladId ? {...g, tactics} : g)),
-    );
+    roster.patch(gladId, {tactics});
     gameAudio.playCrispClick();
   };
 
@@ -4619,8 +4583,7 @@ export default function App() {
       hp: g.maxHp,
       pepTalkStatus: 'Inspire' as const,
     }));
-    gladiatorsRef.current = fullyHealed;
-    setGladiators(fullyHealed);
+    roster.set(fullyHealed);
 
     // 3. Mark feast action unlocked permanently
     setIsFeastUnlocked(true);
@@ -4705,8 +4668,7 @@ export default function App() {
         sitCooldown: 0,
       };
     });
-    gladiatorsRef.current = seatedGlads;
-    setGladiators(seatedGlads);
+    roster.set(seatedGlads);
 
     gameAudio.playPotionGulp();
     gameAudio.playPowerupChime();
@@ -4731,7 +4693,7 @@ export default function App() {
     }
     setManagerStamina((prev) => Math.max(0, prev - 33));
     managerStaminaRef.current = Math.max(0, managerStaminaRef.current - 33);
-    setGameState((prev) => ({ ...prev, gold: Math.max(0, prev.gold - 50) }));
+    economy.debit(50, {floorAtZero: true});
     triggerCampFeast(false);
     setIsManagerMenuOpen(false);
     setActiveCascadingSubMenu('none');
@@ -4764,8 +4726,7 @@ export default function App() {
         attributes: nextAttrs,
       };
     });
-    gladiatorsRef.current = updated;
-    setGladiators(updated);
+    roster.set(updated);
 
     gameAudio.playPowerupChime();
     campSpeechBubblesRef.current.push({
@@ -4805,8 +4766,7 @@ export default function App() {
         attributes: nextAttrs,
       });
     });
-    gladiatorsRef.current = updated;
-    setGladiators(updated);
+    roster.set(updated);
 
     gameAudio.playSwordClash();
     campSpeechBubblesRef.current.push({
@@ -4838,7 +4798,7 @@ export default function App() {
 
     setManagerStamina((prev) => Math.max(0, prev - 33));
     managerStaminaRef.current = Math.max(0, managerStaminaRef.current - 33);
-    setGameState((prev) => ({ ...prev, gold: Math.max(0, prev.gold - physicianCostRef.current) }));
+    economy.debit(physicianCostRef.current, {floorAtZero: true});
 
     const pState: PhysicianNpcState = {
       ...INITIAL_PHYSICIAN_STATE,
@@ -4923,7 +4883,7 @@ export default function App() {
     targetGlad.pepTalkStatus = 'Inspire';
     const recalc = recalculateGladiatorStats(targetGlad);
     Object.assign(targetGlad, recalc);
-    setGladiators([...gladiatorsRef.current]);
+    roster.refresh();
     gameAudio.playPowerupChime();
     campSpeechBubblesRef.current.push({
       id: `manager_motivate_${Date.now()}_${targetGlad.id}`,
@@ -4963,7 +4923,7 @@ export default function App() {
     targetGlad.pepTalkStatus = 'Rage';
     const recalc = recalculateGladiatorStats(targetGlad);
     Object.assign(targetGlad, recalc);
-    setGladiators([...gladiatorsRef.current]);
+    roster.refresh();
     gameAudio.playSwordClash();
     campSpeechBubblesRef.current.push({
       id: `manager_intimidate_${Date.now()}_${targetGlad.id}`,
@@ -5041,8 +5001,7 @@ export default function App() {
     prodigy = recalculateGladiatorStats(prodigy);
 
     const nextRoster = [...gladiatorsRef.current, prodigy];
-    gladiatorsRef.current = nextRoster;
-    setGladiators(nextRoster);
+    roster.set(nextRoster);
 
     // Trigger arrival welcome banter
     const existingLiving = gladiatorsRef.current.filter((g) => g.hp > 0 && g.id !== prodigy.id);
@@ -5112,7 +5071,7 @@ export default function App() {
       }
       return g;
     });
-    gladiatorsRef.current = safeGlads;
+    roster.set(safeGlads);
 
     // Hard limit: for Arena Side Quests, enforce hard limit - player cannot select more gladiators than enemies present!
     // For Coliseum Trials, allow up to 4 gladiators on 3rd podium and above!
@@ -5156,8 +5115,7 @@ export default function App() {
     const nextGlads = safeGlads.map((g) =>
       deployedGlads.some((dg) => dg.id === g.id) ? { ...g, status: 'In Arena' as const } : g,
     );
-    gladiatorsRef.current = nextGlads;
-    setGladiators(nextGlads);
+    roster.set(nextGlads);
 
     setActiveTier(tier);
     activeTierRef.current = tier;
@@ -5225,7 +5183,7 @@ export default function App() {
         extraCrit += 0.15;
       }
 
-      return {
+      return buildFighter({
         id: `p_fighter_${g.id}_${Date.now()}_${idx}`,
         sourceGladiatorId: g.id,
         isPlayerTeam: true,
@@ -5235,8 +5193,6 @@ export default function App() {
         level: Math.max(1, g.level || 1),
         hp: gladHp,
         maxHp: gladMaxHp,
-        stamina: 100,
-        maxStamina: 100,
         attack: Math.max(5, Math.round((g.attack || 20) * scoutAtkMult)),
         defense: Math.max(0, Math.round(g.defense || 10)),
         speed: Math.max(1, Math.round(g.speed || 10)),
@@ -5257,20 +5213,12 @@ export default function App() {
         pepTalkThreatened: g.pepTalkThreatened,
         x: startX,
         y: Math.max(88, Math.min(160, startY)),
-        vx: 0,
-        vy: 0,
         flipX: false, // facing right towards opponents
-        state: 'idle',
         animTimer: idx * 0.3,
         attackCooldown: initialAtkCd,
         tacticsTimer: 1.0 + Math.random(),
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 1.0 + Math.random() * 3.0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     // Spawn Enemy Squad Fighters on Right Side (Cloned fresh with guaranteed positive HP > 0)
@@ -5351,7 +5299,7 @@ export default function App() {
       const startX = 280 - col * 28;
       const startY = 92 + row * 26 + (col === 1 ? 12 : 0);
 
-      return {
+      return buildFighter({
         id: `e_fighter_${idx}_${tmpl.culture}_${Date.now()}_${Math.random()}`,
         isPlayerTeam: false,
         name: tmpl.name,
@@ -5360,8 +5308,6 @@ export default function App() {
         level: enemyLevel,
         hp: tunedHp,
         maxHp: tunedHp,
-        stamina: 100,
-        maxStamina: 100,
         attack: Math.max(5, enemyAtk),
         defense: Math.max(0, enemyDef),
         speed: Math.max(1, enemySpd),
@@ -5376,23 +5322,15 @@ export default function App() {
         elephantChargeCooldown: tmpl.isElephant ? 2.0 : undefined,
         x: startX,
         y: Math.max(88, Math.min(160, startY)),
-        vx: 0,
-        vy: 0,
         flipX: true, // facing left towards player squad
-        state: 'idle',
         animTimer: idx * 0.4,
         attackCooldown: 0.5 + idx * 0.2,
         tacticsTimer: 1.2 + Math.random(),
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 1.0 + Math.random() * 3.0,
         consecutiveMisses: 0,
         repositionTimer: 0,
         stationaryDuelTimer: 0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     arenaFightersRef.current = [...playerFighters, ...enemyFighters];
@@ -5455,8 +5393,7 @@ export default function App() {
     const nextGlads = gladiatorsRef.current.map((g) =>
       g.id === chosenGlad.id ? { ...g, status: 'In Arena' as const } : g,
     );
-    gladiatorsRef.current = nextGlads;
-    setGladiators(nextGlads);
+    roster.set(nextGlads);
 
     const rightW = chosenGlad.equipped?.rightHand ? WEAPON_DATABASE[chosenGlad.equipped.rightHand] : null;
     const leftW = chosenGlad.equipped?.leftHand ? WEAPON_DATABASE[chosenGlad.equipped.leftHand] : null;
@@ -5468,7 +5405,7 @@ export default function App() {
       ? (rightW?.pinBonus || 0)
       : (rightW?.pinBonus || 0) + (leftW?.pinBonus || 0);
 
-    const playerFighter: ArenaFighter = {
+    const playerFighter: ArenaFighter = buildFighter({
       id: `p_fighter_${chosenGlad.id}`,
       sourceGladiatorId: chosenGlad.id,
       isPlayerTeam: true,
@@ -5478,8 +5415,6 @@ export default function App() {
       level: chosenGlad.level,
       hp: chosenGlad.hp,
       maxHp: chosenGlad.maxHp,
-      stamina: 100,
-      maxStamina: 100,
       attack: chosenGlad.attack,
       defense: chosenGlad.defense,
       speed: chosenGlad.speed,
@@ -5501,25 +5436,17 @@ export default function App() {
       pepTalkThreatened: chosenGlad.pepTalkThreatened,
       x: 88,
       y: 125,
-      vx: 0,
-      vy: 0,
       flipX: false,
-      state: 'idle',
       animTimer: 0,
       attackCooldown: 0.4,
       tacticsTimer: 1.0,
-      isBaiting: false,
-      pinnedTimer: 0,
       pinCooldown: 4.0,
       consecutiveMisses: 0,
       repositionTimer: 0,
       stationaryDuelTimer: 0,
-      deathTimer: 0,
-      flashWhiteTimer: 0,
-      rageTimer: 0,
-    };
+    });
 
-    const emperorFighter: ArenaFighter = {
+    const emperorFighter: ArenaFighter = buildFighter({
       id: `emperor_aurelius_${Date.now()}`,
       isPlayerTeam: false,
       isEmperor: true,
@@ -5529,8 +5456,6 @@ export default function App() {
       level: 5,
       hp: 520,
       maxHp: 520,
-      stamina: 100,
-      maxStamina: 100,
       attack: 42,
       defense: 25,
       speed: 13,
@@ -5540,23 +5465,15 @@ export default function App() {
       pinBonus: 0.20,
       x: 250,
       y: 125,
-      vx: 0,
-      vy: 0,
       flipX: true,
-      state: 'idle',
       animTimer: 0,
       attackCooldown: 0.5,
       tacticsTimer: 1.2,
-      isBaiting: false,
-      pinnedTimer: 0,
       pinCooldown: 3.5,
       consecutiveMisses: 0,
       repositionTimer: 0,
       stationaryDuelTimer: 0,
-      deathTimer: 0,
-      flashWhiteTimer: 0,
-      rageTimer: 0,
-    };
+    });
 
     arenaFightersRef.current = [playerFighter, emperorFighter];
     setActiveTier(EMPEROR_DUEL_TIER);
@@ -5609,8 +5526,7 @@ export default function App() {
     const nextGlads = gladiatorsRef.current.map((g) =>
       activePlayerGlads.some((ag) => ag.id === g.id) ? { ...g, status: 'In Arena' as const } : g,
     );
-    gladiatorsRef.current = nextGlads;
-    setGladiators(nextGlads);
+    roster.set(nextGlads);
 
     const deployedPlayerFighters: ArenaFighter[] = activePlayerGlads.map((g, idx) => {
       const col = idx % 2;
@@ -5618,7 +5534,7 @@ export default function App() {
       const startX = 60 + col * 20;
       const startY = 95 + row * 24;
 
-      return {
+      return buildFighter({
         id: `p_glad_${g.id}`,
         sourceGladiatorId: g.id,
         isPlayerTeam: true,
@@ -5628,8 +5544,6 @@ export default function App() {
         level: g.level,
         hp: g.hp,
         maxHp: g.maxHp,
-        stamina: 100,
-        maxStamina: 100,
         attack: g.attack,
         defense: g.defense,
         speed: g.speed,
@@ -5637,20 +5551,12 @@ export default function App() {
         equipped: g.equipped,
         x: startX,
         y: Math.max(88, Math.min(160, startY)),
-        vx: 0,
-        vy: 0,
         flipX: false,
-        state: 'idle',
         animTimer: idx * 0.2,
         attackCooldown: 0.4 + idx * 0.1,
         tacticsTimer: 1.0,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 2.0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     // Alongside 15 low-armor Rebel Slaves (low health, low defense, fast attack speeds)
@@ -5660,7 +5566,7 @@ export default function App() {
       const startX = 35 + (idx % 3) * 16 + (Math.random() * 8 - 4);
       const startY = 88 + Math.floor(idx / 3) * 15 + (Math.random() * 6 - 3);
 
-      return {
+      return buildFighter({
         id: `rebel_slave_${idx}_${Date.now()}`,
         isPlayerTeam: true,
         name: `Rebel Slave ${toRoman(idx + 1)}`,
@@ -5669,28 +5575,18 @@ export default function App() {
         level: 1,
         hp: 48,
         maxHp: 48,
-        stamina: 100,
-        maxStamina: 100,
         attack: 16,
         defense: 3,
         speed: 21,
         tactics: 'aggressive',
         x: Math.max(35, Math.min(120, startX)),
         y: Math.max(86, Math.min(164, startY)),
-        vx: 0,
-        vy: 0,
         flipX: false,
-        state: 'idle',
         animTimer: Math.random() * 2,
         attackCooldown: 0.25 + Math.random() * 0.3,
         tacticsTimer: 1.0,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 2.5,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     // Enemy Side: 10 heavily armored Roman Legionaries (massive HP, high defense, slow attack)
@@ -5700,7 +5596,7 @@ export default function App() {
       const startX = 250 - col * 24 + (Math.random() * 6 - 3);
       const startY = 90 + row * 15 + (Math.random() * 6 - 3);
 
-      return {
+      return buildFighter({
         id: `roman_legionary_${idx}_${Date.now()}`,
         isPlayerTeam: false,
         name: `Roman Legionary ${toRoman(idx + 1)}`,
@@ -5709,28 +5605,18 @@ export default function App() {
         level: 3,
         hp: 340,
         maxHp: 340,
-        stamina: 100,
-        maxStamina: 100,
         attack: 28,
         defense: 22,
         speed: 8,
         tactics: 'defensive',
         x: Math.max(200, Math.min(300, startX)),
         y: Math.max(86, Math.min(164, startY)),
-        vx: 0,
-        vy: 0,
         flipX: true,
-        state: 'idle',
         animTimer: Math.random() * 2,
         attackCooldown: 1.1 + Math.random() * 0.4,
         tacticsTimer: 1.5,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 3.0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      };
+      });
     });
 
     arenaFightersRef.current = [...deployedPlayerFighters, ...slaveFighters, ...romanFighters];
@@ -5808,10 +5694,9 @@ export default function App() {
     const nextGlads = gladiatorsRef.current.map((g) =>
       activePlayerGlads.some((ag) => ag.id === g.id) ? { ...g, status: 'In Arena' as const } : g,
     );
-    gladiatorsRef.current = nextGlads;
-    setGladiators(nextGlads);
+    roster.set(nextGlads);
 
-    const playerFighters: ArenaFighter[] = activePlayerGlads.map((g, idx) => ({
+    const playerFighters: ArenaFighter[] = activePlayerGlads.map((g, idx) => buildFighter({
       id: `p_defend_${g.id}`,
       sourceGladiatorId: g.id,
       isPlayerTeam: true,
@@ -5821,8 +5706,6 @@ export default function App() {
       level: g.level,
       hp: g.hp,
       maxHp: g.maxHp,
-      stamina: 100,
-      maxStamina: 100,
       attack: g.attack,
       defense: g.defense,
       speed: g.speed,
@@ -5830,23 +5713,15 @@ export default function App() {
       equipped: g.equipped,
       x: 65 + (idx % 2) * 25,
       y: 95 + Math.floor(idx / 2) * 22,
-      vx: 0,
-      vy: 0,
       flipX: false,
-      state: 'idle',
       animTimer: idx * 0.2,
       attackCooldown: 0.3 + idx * 0.1,
       tacticsTimer: 1.0,
-      isBaiting: false,
-      pinnedTimer: 0,
       pinCooldown: 2.0,
-      deathTimer: 0,
-      flashWhiteTimer: 0,
-      rageTimer: 0,
     }));
 
     const bandits: ArenaFighter[] = [
-      {
+      buildFighter({
         id: `bandit_cutthroat_${Date.now()}_1`,
         isPlayerTeam: false,
         name: 'Rogue Cutthroat',
@@ -5855,29 +5730,19 @@ export default function App() {
         level: 2,
         hp: 140,
         maxHp: 140,
-        stamina: 100,
-        maxStamina: 100,
         attack: 24,
         defense: 10,
         speed: 14,
         tactics: 'aggressive',
         x: 260,
         y: 105,
-        vx: 0,
-        vy: 0,
         flipX: true,
-        state: 'idle',
         animTimer: 0,
         attackCooldown: 0.5,
         tacticsTimer: 1.0,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 2.5,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      },
-      {
+      }),
+      buildFighter({
         id: `bandit_marauder_${Date.now()}_2`,
         isPlayerTeam: false,
         name: 'Camp Marauder',
@@ -5886,29 +5751,19 @@ export default function App() {
         level: 2,
         hp: 155,
         maxHp: 155,
-        stamina: 100,
-        maxStamina: 100,
         attack: 25,
         defense: 9,
         speed: 13,
         tactics: 'aggressive',
         x: 275,
         y: 130,
-        vx: 0,
-        vy: 0,
         flipX: true,
-        state: 'idle',
         animTimer: 0.2,
         attackCooldown: 0.4,
         tacticsTimer: 1.2,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 3.0,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      },
-      {
+      }),
+      buildFighter({
         id: `bandit_outlaw_${Date.now()}_3`,
         isPlayerTeam: false,
         name: 'Outlaw Slinger',
@@ -5917,28 +5772,18 @@ export default function App() {
         level: 2,
         hp: 120,
         maxHp: 120,
-        stamina: 100,
-        maxStamina: 100,
         attack: 22,
         defense: 8,
         speed: 16,
         tactics: 'ranged',
         x: 290,
         y: 150,
-        vx: 0,
-        vy: 0,
         flipX: true,
-        state: 'idle',
         animTimer: 0.4,
         attackCooldown: 0.6,
         tacticsTimer: 1.0,
-        isBaiting: false,
-        pinnedTimer: 0,
         pinCooldown: 2.5,
-        deathTimer: 0,
-        flashWhiteTimer: 0,
-        rageTimer: 0,
-      },
+      }),
     ];
 
     arenaFightersRef.current = [...playerFighters, ...bandits];
@@ -5992,688 +5837,6 @@ export default function App() {
     adCountdownRef.current = 5.0;
     gameAudio.playCrispClick();
   };
-
-  const finishSandboxDuelInternal = useCallback(
-    (isVictory: boolean) => {
-      const allGlads = gladiatorsRef.current;
-      const fighters = arenaFightersRef.current;
-      const survivingGlads = allGlads.map((g) => {
-        const matchFighter = fighters.find((f) => f.sourceGladiatorId === g.id);
-        if (!matchFighter) return g;
-        return {
-          ...g,
-          hp: Math.max(1, Math.round(matchFighter.hp)),
-        };
-      });
-      gladiatorsRef.current = survivingGlads;
-      setGladiators(survivingGlads);
-
-      const narratives = isVictory
-        ? [
-            'The slave uprising overwhelmed the Roman legionaries in the burning streets!',
-            'Rebel banners flew high above the ruined Roman gate. Rome has been seized!',
-          ]
-        : [
-            'The disciplined legionary formation held fast against the unarmored slave charge.',
-            'The uprising was quelled as Roman reinforcements cordoned off the gate.',
-          ];
-
-      const deployedGladIds = lastDeployedGladIdsRef.current;
-      const partyMembers: PartyMemberPostBattle[] = deployedGladIds.map((gladId) => {
-        const g = allGlads.find((x) => x.id === gladId) || allGlads[0];
-        const matchFighter = fighters.find((f) => f.sourceGladiatorId === gladId);
-        return {
-          id: g.id,
-          name: g.name,
-          culture: g.culture,
-          title: g.title,
-          startLevel: g.level,
-          endLevel: g.level,
-          startXp: g.xp,
-          endXp: g.xp,
-          xpNeeded: g.xpNeeded,
-          xpGained: isVictory ? 100 : 0,
-          startBondPips: 5,
-          endBondPips: 5,
-          didLevelUp: false,
-          hpRemaining: matchFighter ? Math.max(1, Math.round(matchFighter.hp)) : g.hp,
-          maxHp: g.maxHp,
-          heroType: g.heroType,
-          gladiatorClass: g.gladiatorClass,
-        };
-      });
-
-      setAftermathData({
-        isVictory,
-        isTrial: false,
-        tierName: 'Rome in Flames (The Revolt to Seize Rome)',
-        goldEarned: isVictory ? 240 : 0,
-        narratives,
-        bondShifts: [],
-        partyMembers,
-      });
-
-      if (isVictory) {
-        setCombatOutcome('victory');
-        combatOutcomeRef.current = 'victory';
-        setTotalBattlesWon((prev) => prev + 1);
-        totalBattlesWonRef.current += 1;
-        setGameState((prev) => ({
-          ...prev,
-          status: 'VICTORY',
-          score: prev.score + 5000,
-        }));
-        gameAudio.playVictoryFanfare();
-      } else {
-        setCombatOutcome('defeat');
-        combatOutcomeRef.current = 'defeat';
-        gameAudio.playDefeatMotif();
-      }
-    },
-    [],
-  );
-
-  // Internal Conclude Duel & Apply Persistent Health / Rewards / Bond Shifts / Aftermath
-  const finishDuelInternal = useCallback(
-    (isVictory: boolean, verdict: 'thumbs_up' | 'thumbs_down', isTrial: boolean) => {
-      const tier = activeTierRef.current;
-      const fighters = arenaFightersRef.current;
-      const allGlads = gladiatorsRef.current;
-
-      // Identify surviving and near-death deployed gladiators
-      const deployedGladIds = selectedGladiatorIds.filter((id) =>
-        allGlads.some((g) => g.id === id),
-      );
-
-      // Downed gladiators logic:
-      // In Hero recruitment / side-quest battles, all deaths are strictly PERMANENT.
-      // Downed gladiators NEVER survive with 1 HP in hero side quests / side-skirmishes!
-      const isHeroOrSideQuest = !isTrial || !!tier?.heroReward || !!tier?.isFortifiedQuest || isSpecialNarrativeQuest(tier);
-      if (verdict === 'thumbs_up' && !isHeroOrSideQuest) {
-        fighters.forEach((f) => {
-          if (f.isPlayerTeam && f.sourceGladiatorId && f.hp <= 0) {
-            f.hp = 1;
-            f.state = 'idle';
-          }
-        });
-      }
-
-      const survivingDeployedGlads = allGlads.filter((g) => {
-        if (!deployedGladIds.includes(g.id)) return false;
-        const fighter = fighters.find((f) => f.sourceGladiatorId === g.id);
-        return fighter && fighter.hp > 0;
-      });
-      const survivingDeployedIds = survivingDeployedGlads.map((g) => g.id);
-
-      // Check near-death survivors (<25% HP at any point during combat)
-      const nearDeathSurvivorIds = survivingDeployedIds.filter((id) => {
-        const minPct = lowestHpPctRef.current[id] ?? 1;
-        return minPct <= 0.25;
-      });
-
-      // Compute pairwise bond shifts
-      const newBonds = {...gladiatorBondsRef.current};
-      const bondShifts: BondShiftRecord[] = [];
-      const narratives: string[] = [];
-
-      // 1. Bond Shifts across all pairs
-      for (let i = 0; i < allGlads.length; i++) {
-        for (let j = i + 1; j < allGlads.length; j++) {
-          const g1 = allGlads[i];
-          const g2 = allGlads[j];
-          const pairKey = [g1.id, g2.id].sort().join('__');
-          const currentScore = newBonds[pairKey] ?? 15;
-          let delta = 0;
-          let reason = '';
-
-          const bothDeployedAndAlive =
-            survivingDeployedIds.includes(g1.id) && survivingDeployedIds.includes(g2.id);
-
-          if (bothDeployedAndAlive) {
-            // Winning a match together gives +8 bond increase
-            if (isVictory) {
-              delta += 8;
-              reason = 'Victory squadmates (+8)';
-            }
-            // Near-death survival: +12 bond if either/both survived grievous wounds
-            if (nearDeathSurvivorIds.includes(g1.id) || nearDeathSurvivorIds.includes(g2.id)) {
-              delta += 12;
-              reason = reason ? `${reason} & Forged in blood (+12)` : 'Forged in blood (+12)';
-            }
-          } else {
-            // Bond decays slightly (-2) each match for gladiator pairs that did not participate together
-            const neitherDeployed =
-              !deployedGladIds.includes(g1.id) && !deployedGladIds.includes(g2.id);
-            const onlyOneDeployed =
-              (deployedGladIds.includes(g1.id) && !deployedGladIds.includes(g2.id)) ||
-              (!deployedGladIds.includes(g1.id) && deployedGladIds.includes(g2.id));
-
-            if (neitherDeployed || onlyOneDeployed) {
-              delta = -2;
-              reason = 'Idle camp detachment (-2)';
-            }
-          }
-
-          if (delta !== 0) {
-            const updatedScore = Math.max(0, Math.min(100, currentScore + delta));
-            newBonds[pairKey] = updatedScore;
-            bondShifts.push({
-              pairKey,
-              glad1Name: g1.name,
-              glad2Name: g2.name,
-              delta,
-              newScore: updatedScore,
-              reason,
-            });
-          }
-        }
-      }
-
-      setGladiatorBonds(newBonds);
-
-      // 2. Generate atmospheric Post-Battle Narrative Derived from Battle Events
-      // Low health survival narratives
-      nearDeathSurvivorIds.forEach((id) => {
-        const survivor = allGlads.find((g) => g.id === id);
-        if (survivor) {
-          narratives.push(
-            `Seeing ${survivor.name} fight through grievous wounds and survive forged a deeper bond with their squadmates (+12 Bond).`,
-          );
-        }
-      });
-
-      // Bonded death & rage narratives
-      battleRageEventsRef.current.forEach((evt) => {
-        narratives.push(
-          `The death of ${evt.fallenName} shattered ${evt.survivorName}'s composure, triggering a blinding blood rage that will haunt the ludus forever.`,
-        );
-      });
-
-      // Unbonded death narratives
-      unbondedDeathsRef.current.forEach((fallenName) => {
-        narratives.push(
-          `The death of ${fallenName} was met with cold silence—the detachment weighed heavily on the camp.`,
-        );
-      });
-
-      // Verdict narrative for Emperor's Judgment / Quest Mortality
-      if (!isHeroOrSideQuest) {
-        if (verdict === 'thumbs_up') {
-          narratives.push(
-            `The Emperor extended his thumb UP in royal clemency! Downed gladiators survived with 1 HP.`,
-          );
-        } else if (verdict === 'thumbs_down') {
-          narratives.push(
-            `The Emperor extended his thumb DOWN in merciless judgment! Fallen warriors were permanently executed.`,
-          );
-        }
-      } else {
-        const downedInQuest = fighters.filter(
-          (f) => f.isPlayerTeam && f.sourceGladiatorId && f.hp <= 0,
-        );
-        if (downedInQuest.length > 0) {
-          narratives.push(
-            `All casualties sustained during this expedition are permanent. The fallen have been laid to rest at the camp memorial wall.`,
-          );
-        }
-      }
-
-      // Victory bond boost narrative
-      if (isVictory && survivingDeployedGlads.length >= 2) {
-        const squadNames = survivingDeployedGlads.map((g) => g.name).join(' & ');
-        narratives.push(
-          `Fighting shoulder-to-shoulder in the sands of victory tightened the camaraderie between ${squadNames} (+8 Bond).`,
-        );
-      } else if (!isVictory && narratives.length === 0) {
-        narratives.push(
-          'Defeat scarred the arena sands. The fallen and wounded were dragged back to camp to nurse their injuries in silent contemplation.',
-        );
-      }
-
-      // Check for fallen / executed gladiators to erect cultural memorial graves and remove from roster
-      fighters.forEach((f) => {
-        if (f.isPlayerTeam && f.sourceGladiatorId && (f.hp <= 0 || f.isDead || f.state === 'death')) {
-          const deadGlad = allGlads.find((g) => g.id === f.sourceGladiatorId);
-          if (deadGlad) {
-            recordGladiatorDeath(deadGlad);
-          }
-        }
-      });
-
-      // Sync persistent HP and XP back to camp gladiators (Permadeath Cap: dead gladiators omitted to free roster slots)
-      const survivingGlads: Gladiator[] = [];
-      for (const g of allGlads) {
-        const matchFighter = fighters.find((f) => f.sourceGladiatorId === g.id);
-        if (!matchFighter) {
-          if (g.status === 'In Arena') {
-            survivingGlads.push({ ...g, status: 'Available' as const });
-          } else {
-            survivingGlads.push(g);
-          }
-          continue;
-        }
-
-        // If HP <= 0, permanently deceased - do not add back to roster!
-        if (matchFighter.hp <= 0 || matchFighter.isDead || matchFighter.state === 'death') {
-          continue;
-        }
-
-        if (isVictory) {
-          const currentTierIdx = tier ? BATTLE_TIERS.findIndex((t) => t.id === tier.id) : 0;
-          const trainingMult = 1 + (ludusUpgrades.trainingGrounds * 0.25);
-          // Reduce leveling XP gain by 20% (multiplier 0.8)
-          const xpGained = Math.round((60 + Math.max(0, currentTierIdx) * 35) * trainingMult * 0.8);
-          const newXp = g.xp + xpGained;
-          let lvl = g.level;
-          let needed = g.xpNeeded;
-          let curAttrs = g.attributes || { str: 10, dex: 10, vit: 10, con: 10, wil: 10 };
-
-          if (newXp >= needed && lvl < 5) {
-            lvl += 1; // Max Level V
-            needed = Math.floor(needed * 1.5);
-            gameAudio.playLevelUpStinger();
-
-            // Archetype / Cultural stat growth increases (+1 to +2 across STR, DEX, VIT)
-            const strGain = (g.culture === 'celt' || g.culture === 'hunnic' || g.weightClass === 'Heavyweight' || g.weightClass === 'Colossal' || g.isCavalry || g.isElephant) ? 2 : 1;
-            const dexGain = (g.culture === 'berber' || g.culture === 'scythian' || g.weightClass === 'Lightweight' || (g.isCavalry && !g.isElephant)) ? 2 : 1;
-            const vitGain = (g.culture === 'roman' || g.weightClass === 'Heavyweight' || g.weightClass === 'Colossal' || g.isElephant) ? 2 : 1;
-
-            curAttrs = {
-              ...curAttrs,
-              str: (curAttrs.str ?? 10) + strGain,
-              dex: (curAttrs.dex ?? 10) + dexGain,
-              vit: (curAttrs.vit ?? curAttrs.con ?? 10) + vitGain,
-              con: (curAttrs.vit ?? curAttrs.con ?? 10) + vitGain,
-            };
-          }
-
-          const updatedGlad: Gladiator = recalculateGladiatorStats({
-            ...g,
-            status: 'Available',
-            hp: Math.max(1, Math.round(matchFighter.hp)),
-            kills: g.kills + 1,
-            level: lvl,
-            xp: lvl >= 5 ? 0 : newXp % needed,
-            xpNeeded: needed,
-            attributes: curAttrs,
-            pepTalkStatus: undefined,
-            pepTalkThreatened: false,
-          });
-
-          survivingGlads.push(updatedGlad);
-        } else {
-          // If gladiator was threatened and failed the bout, enforce execution
-          if (matchFighter.pepTalkThreatened) {
-            recordGladiatorDeath(g);
-            narratives.push(
-              `⚡ Contractually bound by the Threaten decree, ${g.name} was permanently dismissed/executed following defeat!`,
-            );
-          } else {
-            survivingGlads.push({
-              ...g,
-              status: 'Available' as const,
-              hp: Math.max(1, Math.round(matchFighter.hp)),
-              pepTalkStatus: undefined,
-              pepTalkThreatened: false,
-            });
-          }
-        }
-      }
-
-      // 2.5 AWARD UNIQUE LEGENDARY HEROES ON FORTIFIED QUEST VICTORY
-      if (isVictory && tier?.heroReward) {
-        const rewardHeroType = tier.heroReward;
-        const alreadyHasHero = survivingGlads.some((g) => g.heroType === rewardHeroType);
-        if (!alreadyHasHero && survivingGlads.length < 10) {
-          let heroToAdd: Gladiator | null = null;
-          if (rewardHeroType === 'beastmaster') heroToAdd = { ...HERO_BEASTMASTER, id: `hero_beastmaster_${Date.now()}` };
-          else if (rewardHeroType === 'saladin') heroToAdd = { ...HERO_SALADIN, id: `hero_saladin_${Date.now()}` };
-          else if (rewardHeroType === 'zuzubu') heroToAdd = { ...HERO_ZUZUBU, id: `hero_zuzubu_${Date.now()}` };
-
-          if (heroToAdd) {
-            heroToAdd = recalculateGladiatorStats({
-              ...heroToAdd,
-              x: -30,
-              y: 115,
-              targetX: 110 + Math.random() * 50,
-              targetY: 110 + Math.random() * 25,
-              state: 'walking',
-              targetActivity: 'idle',
-              isWalkingIn: true,
-              flipX: false,
-            });
-            survivingGlads.push(heroToAdd);
-            narratives.push(
-              `🏆 LEGENDARY HERO UNLOCKED: ${heroToAdd.name} (${heroToAdd.title}) was so impressed by your victory that they have joined your Ludus!`,
-            );
-            triggerHeroArrival(heroToAdd);
-            gameAudio.playPowerupChime();
-          }
-        } else if (!alreadyHasHero && survivingGlads.length >= 10) {
-          narratives.push(
-            `A legendary hero offered their allegiance, but your stable was full (10/10). They bestowed an honorary tribute of +400 Gold!`,
-          );
-          setGameState((prev) => ({ ...prev, gold: prev.gold + 400 }));
-        }
-      }
-
-      gladiatorsRef.current = survivingGlads;
-      setGladiators(survivingGlads);
-
-      // 3. Battlefield Salvage on Victory (Even if Survivors):
-      // For each defeated enemy, roll a 25% chance to scavenge a battlefield loot item scaled to that enemy's level!
-      // (Also retain 50% salvage chance when warrior executions occur)
-      const anyPlayerExecuted = fighters.some(
-        (f) => f.isPlayerTeam && f.sourceGladiatorId && f.hp <= 0,
-      );
-      const anyEnemyExecuted = fighters.some(
-        (f) => !f.isPlayerTeam && f.hp <= 0,
-      );
-      const warriorExecutionOccurred = verdict === 'thumbs_down' && (anyPlayerExecuted || anyEnemyExecuted);
-
-      let lootDroppedFromEnemy: ArenaFighter | null = null;
-      const defeatedEnemies = fighters.filter((f) => !f.isPlayerTeam && f.hp <= 0);
-      const allEnemies = fighters.filter((f) => !f.isPlayerTeam);
-
-      if (isVictory) {
-        // Roll 25% chance per defeated enemy
-        for (const defEnemy of defeatedEnemies) {
-          if (Math.random() < 0.25) {
-            lootDroppedFromEnemy = defEnemy;
-            break;
-          }
-        }
-      }
-
-      if (!lootDroppedFromEnemy && warriorExecutionOccurred && Math.random() < 0.50) {
-        lootDroppedFromEnemy =
-          defeatedEnemies.length > 0
-            ? defeatedEnemies[Math.floor(Math.random() * defeatedEnemies.length)]
-            : allEnemies[0] || null;
-      }
-
-      if (lootDroppedFromEnemy) {
-        const livingPlayerGlads = survivingGlads.filter((g) => g.hp > 0);
-        if (livingPlayerGlads.length > 0) {
-          const lootEnemy = lootDroppedFromEnemy;
-          const enemyLevel = lootEnemy ? lootEnemy.level : 1;
-          const enemyName = lootEnemy ? lootEnemy.name : 'Fallen Champion';
-
-          let poolWeapons: WeaponDef[] = [];
-          if (enemyLevel <= 2) {
-            poolWeapons = Object.values(WEAPON_DATABASE).filter((w) => w.tier === 1 && !w.isExotic);
-          } else if (enemyLevel <= 4) {
-            poolWeapons = Object.values(WEAPON_DATABASE).filter((w) => w.tier === 2 && !w.isExotic);
-          } else {
-            // Level 5+: Tier 3 or Caravan relic
-            poolWeapons = Object.values(WEAPON_DATABASE).filter((w) => w.tier === 3);
-          }
-
-          // Match one of the surviving gladiators
-          let candidateGlad = livingPlayerGlads.find((g) => !g.equipped.rightHand || !g.equipped.leftHand);
-          if (!candidateGlad) {
-            candidateGlad = livingPlayerGlads.find((g) => {
-              const rW = g.equipped.rightHand ? WEAPON_DATABASE[g.equipped.rightHand] : null;
-              const lW = g.equipped.leftHand ? WEAPON_DATABASE[g.equipped.leftHand] : null;
-              const curTier = enemyLevel <= 2 ? 1 : enemyLevel <= 4 ? 2 : 3;
-              return (rW && rW.tier < curTier) || (lW && lW.tier < curTier);
-            });
-          }
-          if (!candidateGlad) {
-            candidateGlad = livingPlayerGlads[Math.floor(Math.random() * livingPlayerGlads.length)];
-          }
-
-          let matchingPool: WeaponDef[] = [];
-          if (candidateGlad.equipped.leftHand === null && candidateGlad.equipped.rightHand !== null) {
-            matchingPool = poolWeapons.filter((w) => w.slotType === 'LEFT');
-          } else if (candidateGlad.equipped.rightHand === null && candidateGlad.equipped.leftHand !== null) {
-            matchingPool = poolWeapons.filter((w) => w.slotType === 'RIGHT' || w.slotType === 'BOTH');
-          } else if (candidateGlad.equipped.rightHand === null && candidateGlad.equipped.leftHand === null) {
-            matchingPool = poolWeapons;
-          } else {
-            const rW = candidateGlad.equipped.rightHand ? WEAPON_DATABASE[candidateGlad.equipped.rightHand] : null;
-            const lW = candidateGlad.equipped.leftHand ? WEAPON_DATABASE[candidateGlad.equipped.leftHand] : null;
-            if (rW && rW.tier < 3) {
-              matchingPool = poolWeapons.filter((w) => w.slotType === 'RIGHT' || w.slotType === 'BOTH');
-            } else if (lW && lW.tier < 3) {
-              matchingPool = poolWeapons.filter((w) => w.slotType === 'LEFT');
-            }
-          }
-
-          if (matchingPool.length === 0) {
-            matchingPool = poolWeapons;
-          }
-
-          const chosenWeapon =
-            matchingPool[Math.floor(Math.random() * matchingPool.length)] || poolWeapons[0];
-
-          if (chosenWeapon) {
-            setBattlefieldLoot({
-              enemyName,
-              item: chosenWeapon,
-              targetGladId: candidateGlad.id,
-              targetGladName: candidateGlad.name,
-            });
-            gameAudio.playPowerupChime();
-          }
-        }
-      }
-
-      let wonGold = isVictory ? (tier?.goldReward || 120) : 0;
-      const hasCrowdPleaser = survivingDeployedGlads.some((g) => g.traits?.includes('Crowd Pleaser'));
-      if (isVictory && hasCrowdPleaser) {
-        const crowdBonus = Math.round(wonGold * 0.25);
-        wonGold += crowdBonus;
-        narratives.push(
-          `👑 CROWD PLEASER BONUS: The roaring crowd rained +${crowdBonus} extra gold upon the sand for theatrical finishing blows!`,
-        );
-      }
-
-      // Advance Five-Tier Coliseum Progression ONLY if winning an official Coliseum Trial
-      let currentTierIdx = 0;
-      if (isVictory && isTrial && tier) {
-        currentTierIdx = BATTLE_TIERS.findIndex((t) => t.id === tier.id);
-        if (currentTierIdx >= 0) {
-          setUnlockedTierIndex((prev) => Math.max(prev, currentTierIdx + 1));
-          if (currentTierIdx === 4) {
-            setIsColiseumChampion(true);
-            setIsEmperorEnraged(true);
-            isEmperorEnragedRef.current = true;
-            pendingPostFifthDialogueRef.current = true;
-          }
-        }
-      } else if (tier) {
-        currentTierIdx = BATTLE_TIERS.findIndex((t) => t.id === tier.id);
-      }
-
-      if (isVictory) {
-        setTotalBattlesWon((prev) => prev + 1);
-        totalBattlesWonRef.current += 1;
-        const renownGain = hasCrowdPleaser ? 35 : 25;
-        setManagerRenown((prev) => prev + renownGain);
-        setSpeechcraftLevel((prev) => Math.min(5, Math.floor((managerRenown + renownGain) / 100) + 1));
-      }
-
-      if (tier?.id === 'tier_emperor') {
-        if (isVictory) {
-          setIsEmperorDefeated(true);
-          isEmperorDefeatedRef.current = true;
-          setIsRevoltUnlocked(true);
-          isRevoltUnlockedRef.current = true;
-          narratives.push(
-            'Emperor Aurelius collapses onto the bloodstained sands! His gilded gladius shatters in the dust, ending his tyrannical reign!',
-            'The crowd roars in stunned disbelief—word spreads like wildfire through Rome! The slave uprising awakens!',
-          );
-        } else {
-          narratives.push(
-            'The Emperor stood victorious over your champion. "Rome kneels to me alone!" Aurelius roared to the cheering patricians.',
-          );
-        }
-      } else if (currentTierIdx === 4 && isVictory) {
-        narratives.push(
-          'The Grand Coliseum Champion has fallen! But Emperor Aurelius rises from his royal throne in fury and descends to the arena sands!',
-          '"Insolent slaves!" the Emperor bellows. "I shall crush your champion with my own hands!" Challenge him in a 1-on-1 duel!',
-        );
-      }
-
-      // Reset side-quest bounty pool with fresh contracts whenever any battle concludes (deduplicating already recruited heroes)
-      if (tier) {
-        currentTierIdx = BATTLE_TIERS.findIndex((t) => t.id === tier.id);
-      }
-      const nextPodiumTier = isVictory && isTrial && currentTierIdx >= 0 ? currentTierIdx + 2 : unlockedTierIndex + 1;
-      setSideSkirmishes(generateSideSkirmishes(Math.max(1, nextPodiumTier), true, survivingGlads));
-
-      // Check Traveling Nomad Merchant spawn: 20% (1 in 5) chance whenever ANY fight concludes
-      const effectiveTier = isVictory && isTrial && tier && currentTierIdx >= 1 ? currentTierIdx + 1 : unlockedTierIndex;
-      if (effectiveTier >= 2 && !merchantStateRef.current.active) {
-        if (Math.random() < 0.20) {
-          merchantStateRef.current = {
-            active: true,
-            state: 'entering',
-            x: 24,
-            y: 110,
-            targetX: 180,
-            targetY: 106,
-            sitTimer: 22.0,
-            hasPlayedSitSpeech: false,
-            hasPlayedDepartSpeech: false,
-            flipX: false,
-            animTimer: 0,
-          };
-          setMerchantState({ ...merchantStateRef.current });
-        }
-      }
-
-      // Calculate Party Member progression for only participating squad gladiators
-      const partyMembers: PartyMemberPostBattle[] = deployedGladIds.map((gladId) => {
-        const g = allGlads.find((x) => x.id === gladId) || allGlads[0];
-        const matchFighter = fighters.find((f) => f.sourceGladiatorId === gladId);
-        const isDead = !matchFighter || matchFighter.hp <= 0;
-
-        const trainingMult = 1 + (ludusUpgrades.trainingGrounds * 0.25);
-        // Reduce leveling XP gain by 20% (multiplier 0.8)
-        const xpGained = isVictory && !isDead ? Math.round((60 + Math.max(0, currentTierIdx) * 35) * trainingMult * 0.8) : 0;
-        const startLevel = g.level;
-        const startXp = g.xp;
-        const xpNeeded = g.xpNeeded;
-        const totalXp = startXp + xpGained;
-        const didLevelUp = isVictory && !isDead && totalXp >= xpNeeded && startLevel < 5;
-        const endLevel = didLevelUp ? Math.min(5, startLevel + 1) : startLevel;
-        const endXp = didLevelUp ? totalXp % Math.floor(xpNeeded * 1.5) : isDead ? startXp : totalXp;
-
-        const strGain = (g.culture === 'celt' || g.culture === 'hunnic' || g.weightClass === 'Heavyweight' || g.weightClass === 'Colossal' || g.isCavalry || g.isElephant) ? 2 : 1;
-        const dexGain = (g.culture === 'berber' || g.culture === 'scythian' || g.weightClass === 'Lightweight' || (g.isCavalry && !g.isElephant)) ? 2 : 1;
-        const vitGain = (g.culture === 'roman' || g.weightClass === 'Heavyweight' || g.weightClass === 'Colossal' || g.isElephant) ? 2 : 1;
-        const statGains = didLevelUp ? { str: strGain, dex: dexGain, vit: vitGain } : undefined;
-        const curA = g.attributes || { str: 10, dex: 10, vit: 10, con: 10, wil: 10 };
-        const newStats = {
-          str: (curA.str ?? 10) + (didLevelUp ? strGain : 0),
-          dex: (curA.dex ?? 10) + (didLevelUp ? dexGain : 0),
-          vit: (curA.vit ?? curA.con ?? 10) + (didLevelUp ? vitGain : 0),
-        };
-
-        const otherPartyIds = deployedGladIds.filter((id) => id !== gladId);
-        let startBondScore = 30;
-        if (otherPartyIds.length > 0) {
-          const sum = otherPartyIds.reduce(
-            (acc, oid) => acc + (gladiatorBondsRef.current[[gladId, oid].sort().join('__')] ?? 15),
-            0,
-          );
-          startBondScore = Math.round(sum / otherPartyIds.length);
-        }
-        const bondGain = isVictory && !isDead ? 15 : 0;
-        const endBondScore = isDead ? startBondScore : Math.min(100, startBondScore + bondGain);
-
-        return {
-          id: g.id,
-          name: g.name,
-          culture: g.culture,
-          title: g.title,
-          startLevel,
-          endLevel,
-          startXp,
-          endXp,
-          xpNeeded,
-          xpGained,
-          startBondPips: Math.min(10, Math.floor(startBondScore / 10)),
-          endBondPips: Math.min(10, Math.floor(endBondScore / 10)),
-          didLevelUp,
-          statGains,
-          newStats,
-          hpRemaining: matchFighter ? Math.max(0, Math.round(matchFighter.hp)) : 0,
-          maxHp: g.maxHp,
-          heroType: g.heroType,
-          gladiatorClass: g.gladiatorClass,
-        };
-      });
-
-      // Populate aftermath narrative data
-      setAftermathData({
-        isVictory,
-        isTrial,
-        tierName: tier?.name || 'Coliseum Duel',
-        goldEarned: wonGold,
-        narratives,
-        bondShifts,
-        partyMembers,
-      });
-
-      if (isVictory) {
-        setCombatOutcome('victory');
-        combatOutcomeRef.current = 'victory';
-
-        // First Victory Tutorial Progression & Free Recruits Allocation
-        if (!firstBattleDoneRef.current) {
-          firstBattleDoneRef.current = true;
-          setFirstBattleDone(true);
-          pendingPostBattleTutorialRef.current = true;
-
-          const currentCultures = gladiatorsRef.current.map((g) => g.culture);
-          const unrecruited = INITIAL_GLADIATORS.filter(
-            (c) => !currentCultures.includes(c.culture),
-          );
-          const shuffled = [...unrecruited].sort(() => Math.random() - 0.5);
-          const freePicks = shuffled.slice(0, 2).map((c) => c.culture);
-          setFreeRecruitCultures(freePicks);
-          freeRecruitCulturesRef.current = freePicks;
-
-          heraldTimerRef.current = (30 + Math.random() * 90) * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
-        } else {
-          heraldTimerRef.current = (30 + Math.random() * 90) * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
-        }
-
-        setGameState((prev) => {
-          const newScore = prev.score + wonGold;
-          // Winning the 5th podium or Emperor duel does NOT end the campaign!
-          // Campaign victory is reserved strictly for winning the Slave Revolt (Seizing Rome)!
-          return {
-            ...prev,
-            score: newScore,
-            gold: prev.gold + wonGold,
-          };
-        });
-
-        gameAudio.playVictoryFanfare();
-      } else {
-        setCombatOutcome('defeat');
-        combatOutcomeRef.current = 'defeat';
-
-        const remainingAlive = gladiatorsRef.current.filter((g) => g.hp > 0);
-        const minGold = getConfig('minGoldLossThreshold') as number;
-        if (remainingAlive.length === 0 && gameStateRef.current.gold < minGold) {
-          setGameState((prev) => ({...prev, status: 'GAME_OVER'}));
-        }
-
-        gameAudio.playDefeatMotif();
-      }
-
-      // Persist battle results immediately
-      try {
-        triggerAutosave(false);
-      } catch (_) {}
-    },
-    [addCombatLog, recordGladiatorDeath, selectedGladiatorIds, unlockedTierIndex, triggerAutosave],
-  );
 
   // Conclude Duel entrypoint: triggers Emperor's Judgment Cinematic for ALL normal arena battles
   const finishDuel = useCallback(
@@ -8204,6 +7367,63 @@ export default function App() {
     }
   };
 
+  // Stage 3B: one end-of-battle entry point. The view is rebuilt every render and captured by this callback
+  // under the same dependency list the old finishDuelInternal had, so it sees exactly the same (stale) values.
+  const battleView: BattleView = {
+    gladiatorsRef,
+    arenaFightersRef,
+    roster,
+    lastDeployedGladIdsRef,
+    setAftermathData,
+    setCombatOutcome,
+    combatOutcomeRef,
+    setTotalBattlesWon,
+    totalBattlesWonRef,
+    setGameState,
+    activeTierRef,
+    selectedGladiatorIds,
+    lowestHpPctRef,
+    gladiatorBondsRef,
+    setGladiatorBonds,
+    battleRageEventsRef,
+    unbondedDeathsRef,
+    recordGladiatorDeath,
+    ludusUpgrades,
+    triggerHeroArrival,
+    economy,
+    setBattlefieldLoot,
+    setUnlockedTierIndex,
+    setIsColiseumChampion,
+    setIsEmperorEnraged,
+    isEmperorEnragedRef,
+    pendingPostFifthDialogueRef,
+    setManagerRenown,
+    setSpeechcraftLevel,
+    managerRenown,
+    setIsEmperorDefeated,
+    isEmperorDefeatedRef,
+    setIsRevoltUnlocked,
+    isRevoltUnlockedRef,
+    unlockedTierIndex,
+    setSideSkirmishes,
+    merchantStateRef,
+    setMerchantState,
+    firstBattleDoneRef,
+    setFirstBattleDone,
+    pendingPostBattleTutorialRef,
+    setFreeRecruitCultures,
+    freeRecruitCulturesRef,
+    heraldTimerRef,
+    unlockedTierIndexRef,
+    gameStateRef,
+    triggerAutosave,
+    generateSideSkirmishes,
+  };
+  const finishBattle = useCallback(
+    (outcome: BattleOutcome) => resolveBattle(battleView, outcome),
+    [addCombatLog, recordGladiatorDeath, selectedGladiatorIds, unlockedTierIndex, triggerAutosave],
+  );
+
   // Main Simulation Loop
     const updateView: UpdateView = {
     screenShakeTimerRef,
@@ -8214,7 +7434,7 @@ export default function App() {
     typewriterCharTimerRef,
     isTypewriterDoneRef,
     emperorStabFiredRef,
-    setGameState,
+    economy,
     campShootingStarTimerRef,
     campShootingStarActiveDurationRef,
     isManagerMenuOpen,
@@ -8308,7 +7528,7 @@ export default function App() {
     activeQuestNodeRef,
     questResolutionRef,
     activeExpeditionsRef,
-    setGladiators,
+    roster,
     setStoryState,
     storyStateRef,
     storyCooldownRef,
@@ -8347,8 +7567,7 @@ export default function App() {
     triggerStoryEvent,
     resolveExpedition,
     closeAllCampModals,
-    finishSandboxDuelInternal,
-    finishDuelInternal,
+    resolveBattle: finishBattle,
     stepArenaCombat,
   };
   const update = (dt: number) => updateWorld(updateView, dt);
@@ -8742,8 +7961,7 @@ export default function App() {
             };
             return moved;
           });
-          gladiatorsRef.current = nextGlads;
-          setGladiators(nextGlads);
+          roster.set(nextGlads);
 
           const movedNearest = nextGlads.find((g) => g.id === nearestGlad.id);
           if (movedNearest && minD <= 6) {
@@ -11786,10 +11004,7 @@ export default function App() {
                     disabled={!canAffordRespite}
                     onClick={() => {
                       if (!canAffordRespite) return;
-                      setGameState((prev) => ({
-                        ...prev,
-                        gold: Math.max(0, prev.gold - currentRespiteCost),
-                      }));
+                      economy.debit(currentRespiteCost, {floorAtZero: true});
                       setRespiteCount((prev) => prev + 1);
                       respiteCountRef.current = (respiteCount || 0) + 1;
                       heraldTimerRef.current = 30 * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
@@ -12279,8 +11494,7 @@ export default function App() {
                                     justEquipped: true,
                                   });
                                 });
-                                gladiatorsRef.current = nextGlads;
-                                setGladiators(nextGlads);
+                                roster.set(nextGlads);
                                 gameAudio.playCrispClick();
                               }}
                               className="bg-[#2A1B19] text-[#ded095] border border-[#7f644b] rounded px-2 py-1 text-xs">
@@ -12331,8 +11545,7 @@ export default function App() {
                                     justEquipped: true,
                                   });
                                 });
-                                gladiatorsRef.current = nextGlads;
-                                setGladiators(nextGlads);
+                                roster.set(nextGlads);
                                 gameAudio.playCrispClick();
                               }}
                               className="bg-[#2A1B19] text-[#ded095] border border-[#7f644b] rounded px-2 py-1 text-xs">
@@ -12374,10 +11587,7 @@ export default function App() {
                     disabled={!canAffordRespite}
                     onClick={() => {
                       if (!canAffordRespite) return;
-                      setGameState((prev) => ({
-                        ...prev,
-                        gold: Math.max(0, prev.gold - currentRespiteCost),
-                      }));
+                      economy.debit(currentRespiteCost, {floorAtZero: true});
                       setRespiteCount((prev) => prev + 1);
                       respiteCountRef.current = (respiteCount || 0) + 1;
                       heraldTimerRef.current = 30 * getPodiumCountdownMultiplier(unlockedTierIndexRef.current);
@@ -12781,10 +11991,7 @@ export default function App() {
                                     disabled={!canAfford}
                                     onClick={() => {
                                       if (!canAfford) return;
-                                      setGameState((prev) => ({
-                                        ...prev,
-                                        gold: prev.gold - weapon.cost,
-                                      }));
+                                      economy.debit(weapon.cost);
                                       setPlayerInventory((prev) => [...prev, weapon.id]);
                                       gameAudio.playCoinPickup();
                                       addCombatLog(`🛒 Purchased ${weapon.name} for ${weapon.cost} Gold into Inventory storage.`, 'neutral');
@@ -12984,8 +12191,7 @@ export default function App() {
                                               justEquipped: true,
                                             });
                                           });
-                                          gladiatorsRef.current = nextGlads;
-                                          setGladiators(nextGlads);
+                                          roster.set(nextGlads);
                                           gameAudio.playCrispClick();
                                         }}
                                         className="px-2.5 py-1 rounded bg-[#3f363b] hover:bg-[#9e4a42] text-[#ded095] hover:text-white border border-[#7f644b] font-bold text-[11px] transition cursor-pointer">
@@ -13035,8 +12241,7 @@ export default function App() {
                                                 justEquipped: true,
                                               });
                                             });
-                                            gladiatorsRef.current = nextGlads;
-                                            setGladiators(nextGlads);
+                                            roster.set(nextGlads);
                                             gameAudio.playCrispClick();
                                           }}
                                           className="text-[#a4968d] hover:text-[#9e4a42] p-1 text-xs font-bold"
@@ -13089,8 +12294,7 @@ export default function App() {
                                                 justEquipped: true,
                                               });
                                             });
-                                            gladiatorsRef.current = nextGlads;
-                                            setGladiators(nextGlads);
+                                            roster.set(nextGlads);
                                             gameAudio.playCrispClick();
                                           }}
                                           className="text-[#a4968d] hover:text-[#9e4a42] p-1 text-xs font-bold"
@@ -13238,10 +12442,7 @@ export default function App() {
                               disabled={!canAfford}
                               onClick={() => {
                                 if (!canAfford) return;
-                                setGameState((prev) => ({
-                                  ...prev,
-                                  gold: prev.gold - weapon.cost,
-                                }));
+                                economy.debit(weapon.cost);
                                 setPlayerInventory((prev) => [...prev, weapon.id]);
                                 gameAudio.playPowerupChime();
                                 addCombatLog(`🐪 Acquired exotic relic ${weapon.name} from the Caravan Bazaar for ${weapon.cost} Gold!`, 'crit');
@@ -13346,8 +12547,7 @@ export default function App() {
                                 justEquipped: true,
                               });
                             });
-                            gladiatorsRef.current = nextGlads;
-                            setGladiators(nextGlads);
+                            roster.set(nextGlads);
                           }
 
                           setActiveEquipSelector(null);
@@ -13463,8 +12663,7 @@ export default function App() {
                                   });
                                 });
 
-                                gladiatorsRef.current = nextGlads;
-                                setGladiators(nextGlads);
+                                roster.set(nextGlads);
                                 setActiveEquipSelector(null);
                                 gameAudio.playPowerupChime();
                               }}
@@ -14262,8 +13461,7 @@ export default function App() {
                         };
                         newG = recalculateGladiatorStats(newG);
                         const nextR = [...gladiatorsRef.current, newG];
-                        gladiatorsRef.current = nextR;
-                        setGladiators(nextR);
+                        roster.set(nextR);
                         gameAudio.playLevelUpStinger();
                         gameAudio.playPowerupChime();
                       }}
@@ -14345,8 +13543,7 @@ export default function App() {
                                 };
                                 return recalculateGladiatorStats(upd);
                               });
-                              gladiatorsRef.current = updated;
-                              setGladiators(updated);
+                              roster.set(updated);
 
                               // Also update if currently in arena
                               arenaFightersRef.current = arenaFightersRef.current.map((f) => {
@@ -14435,8 +13632,7 @@ export default function App() {
                       flipX: false,
                     });
                     const next = [...gladiatorsRef.current, hero];
-                    gladiatorsRef.current = next;
-                    setGladiators(next);
+                    roster.set(next);
                     triggerHeroArrival(hero);
                     addCombatLog('🐾 Recruited Numitor the Beastmaster via Debugger!', 'neutral');
                   }}
@@ -14467,8 +13663,7 @@ export default function App() {
                       flipX: false,
                     });
                     const next = [...gladiatorsRef.current, hero];
-                    gladiatorsRef.current = next;
-                    setGladiators(next);
+                    roster.set(next);
                     triggerHeroArrival(hero);
                     addCombatLog('🌿 Recruited Saladin the Medic via Debugger!', 'neutral');
                   }}
@@ -14499,8 +13694,7 @@ export default function App() {
                       flipX: false,
                     });
                     const next = [...gladiatorsRef.current, hero];
-                    gladiatorsRef.current = next;
-                    setGladiators(next);
+                    roster.set(next);
                     triggerHeroArrival(hero);
                     addCombatLog('🐆 Recruited Zuzubu via Debugger!', 'neutral');
                   }}
@@ -14520,7 +13714,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  setGameState((prev) => ({ ...prev, gold: prev.gold + 1000 }));
+                  economy.credit(1000);
                   gameAudio.playCoinPickup();
                 }}
                 className="bg-[#3f363b] hover:bg-[#574b50] text-[#ded095] text-xs font-bold px-3 py-1.5 rounded border border-[#7f644b]">
@@ -14534,8 +13728,7 @@ export default function App() {
                     ...g,
                     hp: g.maxHp,
                   }));
-                  gladiatorsRef.current = healed;
-                  setGladiators(healed);
+                  roster.set(healed);
                   arenaFightersRef.current = arenaFightersRef.current.map((f) => ({
                     ...f,
                     hp: f.maxHp,
@@ -14932,8 +14125,7 @@ export default function App() {
                     });
                   });
 
-                  gladiatorsRef.current = updatedGlads;
-                  setGladiators(updatedGlads);
+                  roster.set(updatedGlads);
                   setPepTalkState(null);
 
                   // Launch combat
@@ -15007,7 +14199,7 @@ export default function App() {
                         disabled={!canAfford}
                         onClick={() => {
                           if (!canAfford) return;
-                          setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+                          economy.debit(cost);
                           setLudusUpgrades((prev) => ({ ...prev, trainingGrounds: prev.trainingGrounds + 1 }));
                           gameAudio.playLevelUpStinger();
                         }}
@@ -15053,7 +14245,7 @@ export default function App() {
                         disabled={!canAfford}
                         onClick={() => {
                           if (!canAfford) return;
-                          setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+                          economy.debit(cost);
                           setLudusUpgrades((prev) => ({ ...prev, medicalBay: prev.medicalBay + 1 }));
                           gameAudio.playPowerupChime();
                         }}
@@ -15113,7 +14305,7 @@ export default function App() {
                           disabled={!canAfford}
                           onClick={() => {
                             if (!canAfford) return;
-                            setGameState((prev) => ({ ...prev, gold: prev.gold - cost }));
+                            economy.debit(cost);
                             setLudusUpgrades((prev) => ({ ...prev, breedingPens: prev.breedingPens + 1 }));
                             gameAudio.playLevelUpStinger();
                           }}
@@ -15327,10 +14519,10 @@ export default function App() {
                   const v = currentVisitor;
                   if (v.cost) {
                     if (gameState.gold < v.cost) return;
-                    setGameState((prev) => ({ ...prev, gold: prev.gold - v.cost! }));
+                    economy.debit(v.cost!);
                   }
                   if (v.reward) {
-                    setGameState((prev) => ({ ...prev, gold: prev.gold + v.reward! }));
+                    economy.credit(v.reward!);
                   }
                   if (v.attributeBoost) {
                     const b = v.attributeBoost;
@@ -15343,8 +14535,7 @@ export default function App() {
                         attributes: updatedA,
                       });
                     });
-                    gladiatorsRef.current = next;
-                    setGladiators(next);
+                    roster.set(next);
                   }
                   if (v.scoutRecruit) {
                     recruitGladiator(v.scoutRecruit);

@@ -6,6 +6,7 @@ import {gameAudio} from '../../utils/helper';
 import {toRoman} from '../logic/roman';
 import {getCrowdTier} from '../rendering/arena/crowdTier';
 import type {ArenaFighter, Culture} from '../types';
+import {buildFighter} from './buildFighter';
 import type {UpdateView} from './view';
 
 type UpdateSimulatedAdView = Pick<
@@ -40,7 +41,7 @@ export function updateSimulatedAd(view: UpdateSimulatedAdView, dt: number): bool
         const culture = cultures[idx % cultures.length];
         const rx = 36 + Math.random() * 32;
         const ry = 90 + Math.random() * 65;
-        return {
+        return buildFighter({
           id: `rebel_reinforce_${Date.now()}_${idx}`,
           isPlayerTeam: true,
           name: `Rebel Reinforcement ${toRoman(idx + 1)}`,
@@ -49,28 +50,18 @@ export function updateSimulatedAd(view: UpdateSimulatedAdView, dt: number): bool
           level: 1,
           hp: 55,
           maxHp: 55,
-          stamina: 100,
-          maxStamina: 100,
           attack: 18,
           defense: 3,
           speed: 22,
           tactics: 'aggressive',
           x: rx,
           y: ry,
-          vx: 0,
-          vy: 0,
           flipX: false,
-          state: 'idle',
           animTimer: Math.random(),
           attackCooldown: 0.2 + Math.random() * 0.2,
           tacticsTimer: 1.0,
-          isBaiting: false,
-          pinnedTimer: 0,
           pinCooldown: 2.0,
-          deathTimer: 0,
-          flashWhiteTimer: 0,
-          rageTimer: 0,
-        };
+        });
       });
 
       arenaFightersRef.current = [...arenaFightersRef.current, ...extraSlaves];
@@ -91,8 +82,7 @@ type UpdateSandboxHoldView = Pick<
   | 'sandboxHoldTimerRef'
   | 'arenaFightersRef'
   | 'combatOutcomeRef'
-  | 'finishSandboxDuelInternal'
-  | 'finishDuelInternal'
+  | 'resolveBattle'
 >;
 
 export function updateSandboxHold(view: UpdateSandboxHoldView, dt: number): boolean {
@@ -103,8 +93,7 @@ export function updateSandboxHold(view: UpdateSandboxHoldView, dt: number): bool
     sandboxHoldTimerRef,
     arenaFightersRef,
     combatOutcomeRef,
-    finishSandboxDuelInternal,
-    finishDuelInternal,
+    resolveBattle,
   } = view;
 
   // POST-FINISH HOLD TIMER (~2.5s hold on battlefield with NO Emperor's Judgment for Special Quests)
@@ -115,14 +104,14 @@ export function updateSandboxHold(view: UpdateSandboxHoldView, dt: number): bool
       if (isEmperorDuelRef.current) {
         isEmperorDuelRef.current = false;
         setIsEmperorDuel(false);
-        finishDuelInternal(combatOutcomeRef.current === 'victory', 'thumbs_down', false);
+        resolveBattle({kind: 'duel', isVictory: combatOutcomeRef.current === 'victory', verdict: 'thumbs_down', isTrial: false});
       } else if (isSandboxBattleRef.current) {
-        finishSandboxDuelInternal(combatOutcomeRef.current === 'victory');
+        resolveBattle({kind: 'sandbox', isVictory: combatOutcomeRef.current === 'victory'});
       } else {
         // Special narrative quest (Rubicon, Alpine, Gallic, etc.) or Camp Defense:
         // DEFEAT IN THIS REALM MEANS CERTAIN DEATH FOR ALL FALLEN WARRIORS (thumbs_down execution)!
         const isVic = combatOutcomeRef.current === 'victory';
-        finishDuelInternal(isVic, isVic ? 'thumbs_up' : 'thumbs_down', false);
+        resolveBattle({kind: 'duel', isVictory: isVic, verdict: isVic ? 'thumbs_up' : 'thumbs_down', isTrial: false});
       }
     }
     // Continue updating positions/particles slightly so combatants settle
