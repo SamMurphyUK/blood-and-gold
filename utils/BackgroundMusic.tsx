@@ -1,4 +1,5 @@
 import React, {useEffect, useRef, useState} from 'react';
+import {getConfig} from '../constants';
 
 /**
  * Properties for the BackgroundMusic component.
@@ -10,8 +11,24 @@ export interface BackgroundMusicProps {
   readonly isPlaying: boolean;
   /** Whether the audio output is muted. Defaults to false. */
   readonly isMuted?: boolean;
-  /** Master volume level between 0.0 (silent) and 1.0 (full). Defaults to 0.15. */
+  /** Master volume level between 0.0 (silent) and 1.0 (full). Defaults to defaultMusicVolume (0.5). */
   readonly volume?: number;
+  /**
+   * Increment when the player enters camp so a browser-blocked autoplay
+   * attempt retries with an explicit HTMLMediaElement.play() call.
+   */
+  readonly playRequest?: number;
+}
+
+function resolveMusicVolume(volume: number | undefined): number {
+  if (typeof volume === 'number' && Number.isFinite(volume) && volume > 0) {
+    return Math.min(1, volume);
+  }
+  const fromConfig = Number(getConfig('defaultMusicVolume'));
+  if (Number.isFinite(fromConfig) && fromConfig > 0) {
+    return Math.min(1, fromConfig);
+  }
+  return 0.5;
 }
 
 /**
@@ -43,7 +60,7 @@ interface WindowWithWebkitAudio extends Window {
 }
 
 // Audio configuration constants
-const DEFAULT_VOLUME = 0.15;
+const DEFAULT_VOLUME = resolveMusicVolume(undefined);
 const SILENCE_THRESHOLD_AMPLITUDE = 0.003; // ~ -50 dBFS
 const SAFETY_MARGIN_SEC = 0.002; // 2ms pre-roll safety margin
 const DECLICK_RAMP_SEC = 0.025; // 25ms de-click fade-in
@@ -236,6 +253,7 @@ export function BackgroundMusic({
   isPlaying,
   isMuted = false,
   volume = DEFAULT_VOLUME,
+  playRequest = 0,
 }: BackgroundMusicProps): React.ReactElement | null {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
@@ -246,6 +264,8 @@ export function BackgroundMusic({
   const fallbackAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const isPlayingRef = useRef(isPlaying);
+  const volumeRef = useRef(resolveMusicVolume(volume));
+  volumeRef.current = resolveMusicVolume(volume);
   const [useFallback, setUseFallback] = useState(false);
   const useFallbackRef = useRef(false);
   const [platformMuted, setPlatformMuted] = useState(false);
@@ -271,6 +291,15 @@ export function BackgroundMusic({
     };
   }, []);
 
+  const playFallbackAudio = (): void => {
+    const audio = fallbackAudioRef.current;
+    if (!audio || !isPlayingRef.current) return;
+    audio.volume = volumeRef.current;
+    void audio.play().catch((err: unknown) => {
+      console.warn('[BackgroundMusic] camp track play blocked:', err);
+    });
+  };
+
   // Initialize AudioContext and Master Gain
   const getOrCreateContext = (): AudioContext | null => {
     if (typeof window === 'undefined') return null;
@@ -290,7 +319,7 @@ export function BackgroundMusic({
     try {
       const ctx = new AudioContextClass();
       const masterGain = ctx.createGain();
-      const targetGain = effectiveMuted ? 0 : Math.max(0, Math.min(1, volume));
+      const targetGain = effectiveMuted ? 0 : volumeRef.current;
       masterGain.gain.setValueAtTime(targetGain, ctx.currentTime);
       masterGain.connect(ctx.destination);
 
@@ -315,6 +344,7 @@ export function BackgroundMusic({
             })
             .catch(() => {});
         }
+        playFallbackAudio();
         if (ctx.state === 'running') {
           cleanupUnlock();
         }
@@ -472,8 +502,11 @@ export function BackgroundMusic({
     if (useFallback) {
       const audio = fallbackAudioRef.current;
       if (!audio) return;
+      audio.volume = volumeRef.current;
       if (isPlaying) {
-        void audio.play().catch(() => {});
+        void audio.play().catch((err: unknown) => {
+          console.warn('[BackgroundMusic] camp track play blocked:', err);
+        });
       } else {
         audio.pause();
       }
@@ -495,7 +528,26 @@ export function BackgroundMusic({
         void ctx.suspend().catch(() => {});
       }
     }
-  }, [isPlaying, useFallback]);
+  }, [isPlaying, useFallback, playRequest]);
+
+  // Retry camp playback once the fallback <audio> element is mounted, and
+  // whenever the camp transition bumps playRequest. autoPlay alone is blocked.
+  useEffect(() => {
+    if (!isPlaying) return;
+    if (useFallback) {
+      playFallbackAudio();
+      return;
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx && ctx.state === 'suspended') {
+      void ctx.resume().catch((err: unknown) => {
+        console.warn('[BackgroundMusic] resume failed:', err);
+      });
+    }
+    if (!sourceNodeRef.current && loopResultRef.current) {
+      startWebAudioLoop();
+    }
+  }, [isPlaying, useFallback, url, playRequest]);
 
   // Handle tab visibility changes (suspend on hide, resume on visible)
   useEffect(() => {
@@ -520,7 +572,7 @@ export function BackgroundMusic({
 
   // Handle Volume & Mute with de-zippering
   useEffect(() => {
-    const targetGain = effectiveMuted ? 0 : Math.max(0, Math.min(1, volume));
+    const targetGain = effectiveMuted ? 0 : volumeRef.current;
 
     if (useFallback) {
       if (fallbackAudioRef.current) {

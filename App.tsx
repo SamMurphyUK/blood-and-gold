@@ -9401,6 +9401,7 @@ export default function App() {
   const [ghostFlashClicks, setGhostFlashClicks] = useState<number>(0);
   const ghostFlashClicksRef = useRef<number>(0);
   ghostFlashClicksRef.current = ghostFlashClicks;
+  const lastCampPointerAtRef = useRef(0);
   const etherealSparksRef = useRef<EtherealSpark[]>([]);
 
   // Dynamic Arena Crowd Acoustic Progression Timer
@@ -9496,6 +9497,7 @@ export default function App() {
   isEmperorDuelRef.current = isEmperorDuel;
   const [isEmperorDuelModalOpen, setIsEmperorDuelModalOpen] = useState<boolean>(false);
   const [emperorDuelSelectedGladId, setEmperorDuelSelectedGladId] = useState<string | null>(null);
+  const emperorDuelSelectedGladIdRef = useRef<string | null>(null);
   const [isRevoltCelebrationOpen, setIsRevoltCelebrationOpen] = useState<boolean>(false);
 
   // Hero Arrival Lore "Hear Tale" State
@@ -9693,6 +9695,7 @@ export default function App() {
   // Audio toggles
   const [sfxMuted, setSfxMuted] = useState(false);
   const [musicMuted, setMusicMuted] = useState(false);
+  const [campMusicKick, setCampMusicKick] = useState(0);
 
   // Modal & Notice state refs for frame-independent loop mutual exclusion
   const isHeraldSummonsOpenRef = useRef(isHeraldSummonsOpen);
@@ -10113,6 +10116,8 @@ export default function App() {
       // Seamless restoration into camp
       cinematicStateRef.current = 4;
       setCinematicState(4);
+      cinematicIntroMusic.stop(0.6);
+      setCampMusicKick((n) => n + 1);
       tutorialStageRef.current = 'done';
       setTutorialStage('done');
       setMode('camp');
@@ -10813,6 +10818,7 @@ export default function App() {
     setCinematicState(4);
     setGameState((prev) => ({...prev, status: 'PLAYING'}));
     setMode('camp');
+    setCampMusicKick((n) => n + 1);
     gameAudio.playCrispClick();
     if (sdk) {
       sdk.startGame();
@@ -10844,6 +10850,7 @@ export default function App() {
     try {
       cinematicIntroMusic.stop(0.3);
     } catch (_) {}
+    setCampMusicKick((n) => n + 1);
     const startGold = getConfig('startingGold') as number;
     cinematicStateRef.current = 4;
     setCinematicState(4);
@@ -13062,6 +13069,21 @@ export default function App() {
       }
     }
 
+    // Emperor duel deploys the champion the player picked, including a War Horse or War Elephant.
+    if (tier.id === 'tier_emperor' && emperorDuelSelectedGladIdRef.current) {
+      const chosen = safeGlads.find(
+        (g) =>
+          g.id === emperorDuelSelectedGladIdRef.current &&
+          g.hp > 0 &&
+          g.status === 'Available' &&
+          !g.isOnQuest,
+      );
+      if (chosen) {
+        availableSquadGlads = [chosen];
+        setSelectedGladiatorIds([chosen.id]);
+      }
+    }
+
     // Slice to enforce hard squad constraint for side skirmishes and trials
     const deployedGlads = availableSquadGlads.slice(0, maxAllowedSquad);
     lastDeployedGladIdsRef.current = deployedGlads.map((g) => g.id);
@@ -13358,10 +13380,9 @@ export default function App() {
     const living = gladiatorsRef.current.filter((g) => g.hp > 0 && g.status === 'Available');
     if (living.length === 0) return;
 
-    let chosenGlad = living.find((g) => g.id === targetGladId);
-    if (!chosenGlad) {
-      chosenGlad = [...living].sort((a, b) => b.level - a.level)[0];
-    }
+    const requestedId = targetGladId || emperorDuelSelectedGladIdRef.current || undefined;
+    const chosenGlad = requestedId ? living.find((g) => g.id === requestedId) : living[0];
+    if (!chosenGlad) return;
 
     lastDeployedGladIdsRef.current = [chosenGlad.id];
     setSelectedGladiatorIds([chosenGlad.id]);
@@ -13401,6 +13422,18 @@ export default function App() {
       equipped: chosenGlad.equipped,
       critBonus,
       pinBonus,
+      heroType: chosenGlad.heroType,
+      isCavalry: !!chosenGlad.isCavalry,
+      isElephant: !!chosenGlad.isElephant,
+      isCharging: !!chosenGlad.isCavalry,
+      hasCavalryHit: false,
+      elephantChargeCooldown: chosenGlad.isElephant ? 2.0 : undefined,
+      attributes: chosenGlad.attributes,
+      weightClass: chosenGlad.weightClass,
+      gladiatorClass: chosenGlad.gladiatorClass,
+      traits: chosenGlad.traits,
+      pepTalkStatus: chosenGlad.pepTalkStatus,
+      pepTalkThreatened: chosenGlad.pepTalkThreatened,
       x: 88,
       y: 125,
       vx: 0,
@@ -18099,22 +18132,55 @@ export default function App() {
           updated.sitCooldown = Math.max(0, updated.sitCooldown - dt);
         }
 
-        if (updated.state === 'sitting' || updated.isSitting) {
+        const distToTarget = Math.hypot(
+          (updated.targetX ?? updated.x) - updated.x,
+          (updated.targetY ?? updated.y) - updated.y,
+        );
+        const investigating =
+          !!updated.investigatingFlash && !updated.investigatingFlash.arrived;
+        const feastActive = !!feastStateRef.current?.active;
+
+        // Crouch only while a rest/sit timer is still running and the gladiator
+        // has reached the seat. Pathfinding and a finished timer return to idle/walk.
+        if (investigating) {
+          updated.isSitting = false;
+          updated.seatedDuration = 0;
+          if (updated.state === 'sitting' || updated.state === 'resting') {
+            updated.state = 'walking';
+          }
+          if (updated.targetActivity === 'sitting' || updated.targetActivity === 'resting') {
+            updated.targetActivity = 'walking';
+          }
+        } else if (
+          (updated.state === 'sitting' || updated.isSitting) &&
+          distToTarget <= 2 &&
+          updated.actionTimer > 0
+        ) {
+          updated.actionTimer -= dt;
           updated.state = 'sitting';
           updated.isSitting = true;
           updated.targetActivity = 'sitting';
           updated.targetX = updated.x;
           updated.targetY = updated.y;
           updated.seatedDuration = (updated.seatedDuration || 0) + dt;
-          // Suppress wander physics and velocity while sitting so gladiators never jitter or flip
-          if ((updated.seatedDuration || 0) < 6.0 && !feastStateRef.current?.active) {
-            updated.actionTimer = Math.max(updated.actionTimer, 6.0 - (updated.seatedDuration || 0));
-          } else if (updated.actionTimer <= 0 && !feastStateRef.current?.active) {
+          if (updated.actionTimer <= 0) {
             updated.isSitting = false;
             updated.state = 'idle';
             updated.targetActivity = 'idle';
-            updated.sitCooldown = 12.0;
+            updated.sitCooldown = feastActive ? 4.0 : 12.0;
+            updated.seatedDuration = 0;
             updated.actionTimer = 2.5 + Math.random() * 3.0;
+          }
+        } else if (updated.state === 'sitting' || updated.isSitting) {
+          updated.isSitting = false;
+          updated.seatedDuration = 0;
+          if (distToTarget > 2) {
+            updated.state = 'walking';
+          } else {
+            updated.state = 'idle';
+            if (updated.targetActivity === 'sitting') {
+              updated.targetActivity = 'idle';
+            }
           }
         } else {
           updated.isSitting = false;
@@ -19784,7 +19850,10 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement> | React.PointerEvent<HTMLCanvasElement>) => {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (now - lastCampPointerAtRef.current < 40) return;
+    lastCampPointerAtRef.current = now;
     // 0. Cinematic Intro interaction
     if (cinematicStateRef.current < 4) {
       cinematicIntroMusic.start(cinematicStateRef.current);
@@ -20037,9 +20106,15 @@ export default function App() {
         const currentClicks = ghostFlashClicksRef.current;
         setGhostFlashClicks(currentClicks);
 
-        // Investigation: The nearest idle living gladiator stops their current task, walks over to the clicked coordinate
+        // Investigation: living gladiators walk to the clicked camp coordinate.
+        // Missing questWalkState counts as 'none' so the opening roster is included.
         const availableLivingGlads = gladiatorsRef.current.filter(
-          (g) => g.hp > 0 && g.status === 'Available' && !g.hidden && g.questWalkState === 'none' && !g.isWalkingIn,
+          (g) =>
+            g.hp > 0 &&
+            g.status === 'Available' &&
+            !g.hidden &&
+            (g.questWalkState ?? 'none') === 'none' &&
+            !g.isWalkingIn,
         );
 
         if (availableLivingGlads.length > 0) {
@@ -20053,21 +20128,37 @@ export default function App() {
             }
           }
 
-          nearestGlad.targetX = Math.round(worldX);
-          nearestGlad.targetY = Math.round(worldY);
-          nearestGlad.state = 'walking';
-          nearestGlad.targetActivity = 'idle';
-          nearestGlad.actionTimer = 4.5;
-          nearestGlad.investigatingFlash = {
-            clickCount: currentClicks,
-            flashX: worldX,
-            flashY: worldY,
-            arrived: false,
-          };
+          const destX = Math.round(worldX);
+          const destY = Math.round(worldY);
+          const moverIds = new Set(availableLivingGlads.map((g) => g.id));
+          const nextGlads = gladiatorsRef.current.map((g) => {
+            if (!moverIds.has(g.id)) return g;
+            const moved = {
+              ...g,
+              targetX: destX,
+              targetY: destY,
+              state: 'walking' as const,
+              targetActivity: 'idle' as const,
+              isSitting: false,
+              actionTimer: 4.5,
+              investigatingFlash:
+                g.id === nearestGlad.id
+                  ? {
+                      clickCount: currentClicks,
+                      flashX: worldX,
+                      flashY: worldY,
+                      arrived: false,
+                    }
+                  : g.investigatingFlash,
+            };
+            return moved;
+          });
+          gladiatorsRef.current = nextGlads;
+          setGladiators(nextGlads);
 
-          // If gladiator is already adjacent to coordinate (<= 6px), investigate immediately
-          if (minD <= 6) {
-            handleGladiatorInvestigationArrival(nearestGlad, currentClicks);
+          const movedNearest = nextGlads.find((g) => g.id === nearestGlad.id);
+          if (movedNearest && minD <= 6) {
+            handleGladiatorInvestigationArrival(movedNearest, currentClicks);
           }
         }
       }
@@ -20218,6 +20309,8 @@ export default function App() {
         url={currentMusicUrl}
         isPlaying={isMusicPlaying}
         isMuted={musicMuted}
+        volume={Number(getConfig('defaultMusicVolume')) || 0.5}
+        playRequest={campMusicKick}
       />
 
       {/* INTRO AUDIO STATUS & SKIP BUTTON — unmounted once the intro ends */}
@@ -20411,12 +20504,15 @@ export default function App() {
       )}
 
       {/* GAME CANVAS & CRISP VECTOR NOTIFICATIONS CONTAINER */}
-      <div className="flex-1 w-full min-h-0 flex items-center justify-center bg-[#3f363b] relative overflow-hidden">
+      <div
+        className="flex-1 w-full min-h-0 flex items-center justify-center bg-[#3f363b] relative overflow-hidden pointer-events-auto"
+        style={{pointerEvents: 'auto'}}>
         <canvas
           ref={canvasRef}
           width={canvasWidth}
           height={canvasHeight}
           onClick={handleCanvasClick}
+          onPointerDown={handleCanvasClick}
           onMouseMove={handleCanvasMouseMove}
           onPointerLeave={() => {
             setHoveredCampObject(null);
@@ -20427,12 +20523,13 @@ export default function App() {
             aspectRatio: `${canvasWidth} / ${canvasHeight}`,
             width: `min(100%, calc(100vh * ${canvasWidth} / ${canvasHeight}))`,
             imageRendering: 'pixelated',
+            pointerEvents: 'auto',
             cursor:
               mode === 'camp' && (hoveredCampObject || hoveredGraveId)
                 ? 'pointer'
                 : 'default',
           }}
-          className="h-auto max-w-full max-h-full drop-shadow-2xl"
+          className="h-auto max-w-full max-h-full drop-shadow-2xl pointer-events-auto"
         />
 
         {/* CRISP HIGH-RESOLUTION EMPEROR POST-FIGHT VERDICT DIALOGUE OVERLAY */}
@@ -22721,11 +22818,20 @@ export default function App() {
                 {gladiators
                   .filter((g) => g.hp > 0 && g.status === 'Available')
                   .map((glad) => {
-                    const isSelected = (emperorDuelSelectedGladId || gladiators[0]?.id) === glad.id;
+                    const livingChampions = gladiators.filter(
+                      (g) => g.hp > 0 && g.status === 'Available',
+                    );
+                    const highlightedId =
+                      emperorDuelSelectedGladId &&
+                      livingChampions.some((g) => g.id === emperorDuelSelectedGladId)
+                        ? emperorDuelSelectedGladId
+                        : livingChampions[0]?.id;
+                    const isSelected = highlightedId === glad.id;
                     return (
                       <div
                         key={glad.id}
                         onClick={() => {
+                          emperorDuelSelectedGladIdRef.current = glad.id;
                           setEmperorDuelSelectedGladId(glad.id);
                           gameAudio.playHoverMicroTone();
                         }}
@@ -22795,8 +22901,18 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => {
-                  const targetId = emperorDuelSelectedGladId || gladiators.find((g) => g.hp > 0)?.id;
+                  const livingChampions = gladiators.filter(
+                    (g) => g.hp > 0 && g.status === 'Available',
+                  );
+                  const targetId =
+                    emperorDuelSelectedGladId &&
+                    livingChampions.some((g) => g.id === emperorDuelSelectedGladId)
+                      ? emperorDuelSelectedGladId
+                      : livingChampions[0]?.id;
                   if (targetId) {
+                    emperorDuelSelectedGladIdRef.current = targetId;
+                    setEmperorDuelSelectedGladId(targetId);
+                    setSelectedGladiatorIds([targetId]);
                     setIsEmperorDuelModalOpen(false);
                     initiatePreBattlePepTalk(EMPEROR_DUEL_TIER, false);
                   }
@@ -26210,7 +26326,11 @@ export default function App() {
                   setPepTalkState(null);
 
                   // Launch combat
-                  launchBattle(state.pendingTier, state.isTrial);
+                  if (state.pendingTier.id === EMPEROR_DUEL_TIER.id) {
+                    launchEmperorDuel(emperorDuelSelectedGladIdRef.current || undefined);
+                  } else {
+                    launchBattle(state.pendingTier, state.isTrial);
+                  }
                 }}
                 className="bg-[#ba7654] hover:bg-[#cb9f6b] text-[#3f363b] font-black py-3 px-6 rounded-xl text-sm md:text-base tracking-wide flex items-center justify-center gap-2 transition shadow-[inset_-2px_-2px_0px_#2a2428,inset_2px_2px_0px_#ded095] cursor-pointer min-h-[46px]">
                 <span>MARCH TO ARENA SANDS ⚔️ ➔</span>
