@@ -2,7 +2,7 @@
 // Rich narrative vignettes for each warrior culture exploring their homeland,
 // memory of freedom, combat ethos, and in-world quest dilemmas presented to Dominus.
 
-import { Culture } from './portraits';
+import type { Culture } from '../types';
 
 export interface StoryDialogueEvent {
   id: string;

@@ -5,27 +5,7 @@
 // 3 distinct tonal layers (dark base shadow, cultural mid-tone skin, sharp warm torchlight highlights),
 // and heavy ink-black comic shadows (#0c070a) against a dark vignette backdrop.
 
-export type Culture = 'roman' | 'celt' | 'berber' | 'scythian' | 'hunnic';
-
-export type GladiatorClass =
-  | 'Murmillo'
-  | 'Retiarius'
-  | 'Bestiarius'
-  | 'Dimachaerus'
-  | 'Thracian'
-  | 'Legionary'
-  | 'Rebel'
-  | 'War Horse'
-  | 'War Elephant';
-
-export type NpcPortraitType =
-  | 'corrupt_senator'
-  | 'shadow_broker'
-  | 'imperial_magistrate'
-  | 'priestess_bellona'
-  | 'escaped_slave_ring';
-
-export type HeroType = 'beastmaster' | 'saladin' | 'zuzubu' | 'emperor';
+import type {Culture, GladiatorClass, NpcPortraitType, HeroType} from './src/types';
 
 export interface PortraitConfig {
   culture: Culture;
