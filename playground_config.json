@@ -4,8 +4,8 @@
       "name": "startingGold",
       "type": "number",
       "label": "Starting Gold",
-      "default": 250,
-      "min": 100,
+      "default": 0,
+      "min": 0,
       "max": 1000,
       "step": 25
     },

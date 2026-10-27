@@ -61,6 +61,7 @@ interface WindowWithWebkitAudio extends Window {
 
 // Audio configuration constants
 const DEFAULT_VOLUME = resolveMusicVolume(undefined);
+const TRACK_FADE_SEC = 0.9;
 const SILENCE_THRESHOLD_AMPLITUDE = 0.003; // ~ -50 dBFS
 const SAFETY_MARGIN_SEC = 0.002; // 2ms pre-roll safety margin
 const DECLICK_RAMP_SEC = 0.025; // 25ms de-click fade-in
@@ -266,6 +267,8 @@ export function BackgroundMusic({
   const isPlayingRef = useRef(isPlaying);
   const volumeRef = useRef(resolveMusicVolume(volume));
   volumeRef.current = resolveMusicVolume(volume);
+  const fadeTokenRef = useRef(0);
+  const htmlFadeTokenRef = useRef(0);
   const [useFallback, setUseFallback] = useState(false);
   const useFallbackRef = useRef(false);
   const [platformMuted, setPlatformMuted] = useState(false);
@@ -291,12 +294,34 @@ export function BackgroundMusic({
     };
   }, []);
 
+  const fadeHtmlVolume = (
+    audio: HTMLAudioElement,
+    to: number,
+    onDone?: () => void,
+  ): void => {
+    const token = ++htmlFadeTokenRef.current;
+    const from = audio.volume;
+    const start = performance.now();
+    const durationMs = TRACK_FADE_SEC * 1000;
+    const step = (now: number) => {
+      if (htmlFadeTokenRef.current !== token) return;
+      const t = Math.min(1, (now - start) / durationMs);
+      audio.volume = from + (to - from) * t;
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        onDone?.();
+      }
+    };
+    requestAnimationFrame(step);
+  };
+
   const playFallbackAudio = (): void => {
     const audio = fallbackAudioRef.current;
     if (!audio || !isPlayingRef.current) return;
-    audio.volume = volumeRef.current;
+    fadeHtmlVolume(audio, volumeRef.current);
     void audio.play().catch((err: unknown) => {
-      console.warn('[BackgroundMusic] camp track play blocked:', err);
+      console.warn('[BackgroundMusic] track play blocked:', err);
     });
   };
 
@@ -319,8 +344,7 @@ export function BackgroundMusic({
     try {
       const ctx = new AudioContextClass();
       const masterGain = ctx.createGain();
-      const targetGain = effectiveMuted ? 0 : volumeRef.current;
-      masterGain.gain.setValueAtTime(targetGain, ctx.currentTime);
+      masterGain.gain.setValueAtTime(0.0001, ctx.currentTime);
       masterGain.connect(ctx.destination);
 
       audioCtxRef.current = ctx;
@@ -328,6 +352,7 @@ export function BackgroundMusic({
 
       // Autoplay unlock for mobile/desktop browsers with iOS WebKit silence kickstart
       const unlock = () => {
+        if (!isPlayingRef.current) return;
         if (ctx.state === 'suspended') {
           void ctx
             .resume()
@@ -434,6 +459,19 @@ export function BackgroundMusic({
     source.start(0);
     sourceNodeRef.current = source;
     trackGainRef.current = trackGain;
+
+    if (isPlayingRef.current && !effectiveMuted) {
+      const now = ctx.currentTime;
+      masterGain.gain.cancelScheduledValues(now);
+      const current = Number.isFinite(masterGain.gain.value)
+        ? masterGain.gain.value
+        : 0.0001;
+      masterGain.gain.setValueAtTime(Math.max(0.0001, current), now);
+      masterGain.gain.linearRampToValueAtTime(
+        volumeRef.current,
+        now + TRACK_FADE_SEC,
+      );
+    }
   };
 
   // Fetch and decode audio file when URL changes
@@ -497,58 +535,6 @@ export function BackgroundMusic({
     };
   }, [url]);
 
-  // Handle Play/Pause with true pause & resume
-  useEffect(() => {
-    if (useFallback) {
-      const audio = fallbackAudioRef.current;
-      if (!audio) return;
-      audio.volume = volumeRef.current;
-      if (isPlaying) {
-        void audio.play().catch((err: unknown) => {
-          console.warn('[BackgroundMusic] camp track play blocked:', err);
-        });
-      } else {
-        audio.pause();
-      }
-      return;
-    }
-
-    const ctx = audioCtxRef.current;
-    if (!ctx) return;
-
-    if (isPlaying) {
-      if (ctx.state === 'suspended') {
-        void ctx.resume().catch(() => {});
-      }
-      if (!sourceNodeRef.current && loopResultRef.current) {
-        startWebAudioLoop();
-      }
-    } else {
-      if (ctx.state === 'running') {
-        void ctx.suspend().catch(() => {});
-      }
-    }
-  }, [isPlaying, useFallback, playRequest]);
-
-  // Retry camp playback once the fallback <audio> element is mounted, and
-  // whenever the camp transition bumps playRequest. autoPlay alone is blocked.
-  useEffect(() => {
-    if (!isPlaying) return;
-    if (useFallback) {
-      playFallbackAudio();
-      return;
-    }
-    const ctx = audioCtxRef.current;
-    if (ctx && ctx.state === 'suspended') {
-      void ctx.resume().catch((err: unknown) => {
-        console.warn('[BackgroundMusic] resume failed:', err);
-      });
-    }
-    if (!sourceNodeRef.current && loopResultRef.current) {
-      startWebAudioLoop();
-    }
-  }, [isPlaying, useFallback, url, playRequest]);
-
   // Handle tab visibility changes (suspend on hide, resume on visible)
   useEffect(() => {
     const handleVisibility = () => {
@@ -570,28 +556,67 @@ export function BackgroundMusic({
     };
   }, [useFallback]);
 
-  // Handle Volume & Mute with de-zippering
+  // Fade this track in when its scene is active, and fade it out then stop
+  // it when the other scene takes over. A hard pause left the previous
+  // track running under the new one.
   useEffect(() => {
-    const targetGain = effectiveMuted ? 0 : volumeRef.current;
+    const targetGain =
+      isPlaying && !effectiveMuted ? volumeRef.current : 0.0001;
+    const token = ++fadeTokenRef.current;
 
     if (useFallback) {
-      if (fallbackAudioRef.current) {
-        fallbackAudioRef.current.muted = effectiveMuted;
-        fallbackAudioRef.current.volume = targetGain;
+      const audio = fallbackAudioRef.current;
+      if (!audio) return;
+      audio.muted = effectiveMuted;
+      if (isPlaying && !effectiveMuted) {
+        void audio.play().catch((err: unknown) => {
+          console.warn('[BackgroundMusic] track play blocked:', err);
+        });
       }
+      fadeHtmlVolume(audio, targetGain < 0.01 ? 0 : targetGain, () => {
+        if (fadeTokenRef.current !== token) return;
+        if (!isPlayingRef.current || effectiveMuted) audio.pause();
+      });
       return;
     }
 
     const ctx = audioCtxRef.current;
     const masterGain = masterGainRef.current;
-    if (ctx && masterGain && ctx.state !== 'closed') {
-      masterGain.gain.setTargetAtTime(
-        targetGain,
-        ctx.currentTime,
-        VOLUME_TIME_CONSTANT_SEC,
-      );
+    if (!ctx || !masterGain || ctx.state === 'closed') return;
+
+    const now = ctx.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    const current = Number.isFinite(masterGain.gain.value)
+      ? masterGain.gain.value
+      : 0.0001;
+    masterGain.gain.setValueAtTime(Math.max(0.0001, current), now);
+    masterGain.gain.linearRampToValueAtTime(
+      targetGain,
+      now + TRACK_FADE_SEC,
+    );
+
+    if (isPlaying && !effectiveMuted) {
+      if (ctx.state === 'suspended') {
+        void ctx.resume().catch((err: unknown) => {
+          console.warn('[BackgroundMusic] resume failed:', err);
+        });
+      }
+      if (!sourceNodeRef.current && loopResultRef.current) {
+        startWebAudioLoop();
+      }
+      return;
     }
-  }, [effectiveMuted, volume, useFallback]);
+
+    window.setTimeout(() => {
+      if (fadeTokenRef.current !== token) return;
+      if (isPlayingRef.current) return;
+      stopWebAudioSource();
+      if (fallbackAudioRef.current) fallbackAudioRef.current.pause();
+      if (ctx.state === 'running') {
+        void ctx.suspend().catch(() => {});
+      }
+    }, TRACK_FADE_SEC * 1000 + 60);
+  }, [isPlaying, effectiveMuted, volume, useFallback, playRequest, url]);
 
   // Cleanup on component unmount
   useEffect(() => {
@@ -616,7 +641,7 @@ export function BackgroundMusic({
         ref={fallbackAudioRef}
         src={url}
         loop
-        autoPlay={isPlaying}
+        autoPlay={false}
         style={{display: 'none'}}
       />
     );

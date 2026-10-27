@@ -117,7 +117,7 @@ export const CONFIG = {
 
   // Rules & Gameplay Balances
   startingGold: {
-    value: 250,
+    value: 0,
     type: 'number',
     label: 'Starting Gold',
     group: 'RULES',
@@ -292,10 +292,15 @@ function isUsableConfigValue(value: unknown, type: string): value is ConfigValue
 
 /**
  * Playground injects `globalThis.playgroundConfig` only after its SDK is up.
- * Standalone playback (local preview, itch.io) has no injection, so economic
- * keys must use the schema defaults in playground_config.json — not an
- * uninitialized 0 / undefined / NaN.
+ * Standalone playback uses the shipped `values` in playground_config.json,
+ * including a real starting purse of 0. Undefined and NaN are still rejected.
  */
+function readConfiguredValue(key: string): unknown {
+  const values = (playgroundFile as {values?: Record<string, unknown>}).values;
+  if (!values || typeof values !== 'object') return undefined;
+  return values[key];
+}
+
 function readPlaygroundOverride(key: string): unknown {
   const injected = (globalThis as {playgroundConfig?: Record<string, unknown>})
     .playgroundConfig;
@@ -318,6 +323,10 @@ export function getConfig<K extends ConfigKey>(
   const override = readPlaygroundOverride(key);
   if (isUsableConfigValue(override, entry.type)) {
     return override as (typeof CONFIG)[K]['value'];
+  }
+  const configured = readConfiguredValue(key);
+  if (isUsableConfigValue(configured, entry.type)) {
+    return configured as (typeof CONFIG)[K]['value'];
   }
   const fallback = PLAYGROUND_DEFAULTS[key];
   if (fallback !== undefined && isUsableConfigValue(fallback, entry.type)) {

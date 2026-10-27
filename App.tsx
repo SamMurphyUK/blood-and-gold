@@ -1124,6 +1124,32 @@ export function toRoman(num: number): string {
   return roman || 'I';
 }
 
+function sumQuestAmount(base?: number, extra?: number): number | undefined {
+  const sum = (base || 0) + (extra || 0);
+  return sum === 0 ? undefined : sum;
+}
+
+function mergeQuestRewards(base?: QuestReward, extra?: QuestReward): QuestReward | undefined {
+  if (!base && !extra) return undefined;
+  const gold = sumQuestAmount(base?.gold, extra?.gold);
+  const xp = sumQuestAmount(base?.xp, extra?.xp);
+  const heal = sumQuestAmount(base?.heal, extra?.heal);
+  const recruit = extra?.recruit || base?.recruit;
+  const unlockChain = extra?.unlockChain || base?.unlockChain;
+  const killed = base?.killed || extra?.killed;
+  if (gold == null && xp == null && heal == null && !recruit && !unlockChain && !killed) return undefined;
+  return {gold, xp, heal, recruit, unlockChain, killed};
+}
+
+function mergeQuestPenalties(base?: QuestPenalty, extra?: QuestPenalty): QuestPenalty | undefined {
+  if (!base && !extra) return undefined;
+  const gold = sumQuestAmount(base?.gold, extra?.gold);
+  const damage = sumQuestAmount(base?.damage, extra?.damage);
+  const killed = base?.killed || extra?.killed;
+  if (gold == null && damage == null && !killed) return undefined;
+  return {gold, damage, killed};
+}
+
 export interface QuestResolutionModalState {
   node: QuestNode;
   glad: Gladiator;
@@ -12298,8 +12324,18 @@ export default function App() {
       const nextNodeId = isSuccess ? choice.successNextId : choice.failureNextId;
       const outcomeNode = nextNodeId ? QUEST_DATABASE[nextNodeId] : undefined;
 
-      const rewards = isSuccess ? choice.rewards : undefined;
-      const penalty = !isSuccess ? choice.penalty : undefined;
+      // Finale nodes state their own purse, but the resolution modal never
+      // offers that choice. Pay it with the expedition reward so the treasury
+      // matches the contract on the button and the amount in the finale text.
+      const finaleChoice = outcomeNode?.isTerminal ? outcomeNode.choices[0] : undefined;
+      const rewards = mergeQuestRewards(
+        isSuccess ? choice.rewards : undefined,
+        finaleChoice?.rewards,
+      );
+      const penalty = mergeQuestPenalties(
+        !isSuccess ? choice.penalty : undefined,
+        finaleChoice?.penalty,
+      );
 
       // Apply dynamic consequences to Ludus
       if (rewards) {
@@ -20267,11 +20303,7 @@ export default function App() {
 
 
 
-  const currentMusicUrl =
-    mode === 'arena'
-      ? 'assets/audio/bgm_arena_battle.mp3'
-      : 'assets/audio/bgm_camp.mp3';
-
+  const inCamp = mode === 'camp';
   const isMusicPlaying =
     gameState.status === 'PLAYING' && !isGameMenuOpen && !musicMuted;
 
@@ -20306,11 +20338,17 @@ export default function App() {
         }
       `}</style>
       <BackgroundMusic
-        url={currentMusicUrl}
-        isPlaying={isMusicPlaying}
+        url="assets/audio/bgm_camp.mp3"
+        isPlaying={isMusicPlaying && inCamp}
         isMuted={musicMuted}
         volume={Number(getConfig('defaultMusicVolume')) || 0.5}
         playRequest={campMusicKick}
+      />
+      <BackgroundMusic
+        url="assets/audio/bgm_arena_battle.mp3"
+        isPlaying={isMusicPlaying && !inCamp}
+        isMuted={musicMuted}
+        volume={Number(getConfig('defaultMusicVolume')) || 0.5}
       />
 
       {/* INTRO AUDIO STATUS & SKIP BUTTON — unmounted once the intro ends */}
@@ -22552,7 +22590,18 @@ export default function App() {
               {questResolution.rewards && (
                 <div className="space-y-1 text-[#88997a]">
                   {questResolution.rewards.gold && (
-                    <div>🪙 Treasury: +{questResolution.rewards.gold} Gold awarded!</div>
+                    <div>
+                      🪙 Treasury: +{questResolution.rewards.gold} Gold awarded!
+                      {questResolution.outcomeNode?.isTerminal &&
+                      questResolution.choice.rewards?.gold &&
+                      questResolution.outcomeNode.choices[0]?.rewards?.gold ? (
+                        <span>
+                          {' '}
+                          ({questResolution.choice.rewards.gold} expedition +{' '}
+                          {questResolution.outcomeNode.choices[0].rewards.gold} finale)
+                        </span>
+                      ) : null}
+                    </div>
                   )}
                   {questResolution.rewards.heal && (
                     <div>💚 Recovery: Champion healed +{questResolution.rewards.heal} HP!</div>
@@ -22572,7 +22621,18 @@ export default function App() {
               {questResolution.penalty && (
                 <div className="space-y-1 text-[#ba7654]">
                   {questResolution.penalty.gold && (
-                    <div>🪙 Treasury Loss: {questResolution.penalty.gold} Gold lost/fine!</div>
+                    <div>
+                      🪙 Treasury Loss: {questResolution.penalty.gold} Gold lost/fine!
+                      {questResolution.outcomeNode?.isTerminal &&
+                      questResolution.choice.penalty?.gold &&
+                      questResolution.outcomeNode.choices[0]?.penalty?.gold ? (
+                        <span>
+                          {' '}
+                          ({questResolution.choice.penalty.gold} expedition{' '}
+                          {questResolution.outcomeNode.choices[0].penalty.gold} finale)
+                        </span>
+                      ) : null}
+                    </div>
                   )}
                   {questResolution.penalty.damage && (
                     <div>
