@@ -1591,6 +1591,9 @@ export default function App() {
 
   // Debug Menu State ('Z' key)
   const [isDebugMenuOpen, setIsDebugMenuOpen] = useState(false);
+  // Alt-camp preview is draw-only. The ref is what the frame loop reads; the state is for the return button.
+  const [altCampPreview, setAltCampPreview] = useState(false);
+  const altCampPreviewRef = useRef(false);
   const [debugSpawnLevel, setDebugSpawnLevel] = useState<number>(1);
 
   const [firstBattleDone, setFirstBattleDone] = useState<boolean>(SAVE_SCHEMA.firstBattleDone.initial());
@@ -3467,6 +3470,12 @@ export default function App() {
       }
 
       if (e.key === 'Escape') {
+        if (altCampPreviewRef.current) {
+          altCampPreviewRef.current = false;
+          setAltCampPreview(false);
+          gameAudio.playCrispClick();
+          return;
+        }
         if (deploymentTier) {
           setDeploymentTier(null);
           gameAudio.playCrispClick();
@@ -7368,6 +7377,7 @@ export default function App() {
     courierNpcRef,
     visitorWalkingNpcRef,
     gladiatorsRef,
+    altCampPreviewRef,
     sparkleTimerRef,
     campWeatherRef,
     dimAlphaRef,
@@ -7423,6 +7433,8 @@ export default function App() {
     const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     if (now - lastCampPointerAtRef.current < 40) return;
     lastCampPointerAtRef.current = now;
+    // The preview is a lineup, not the live yard. Clicks must not move the roster hidden underneath it.
+    if (altCampPreviewRef.current) return;
     // 0. Cinematic Intro interaction
     if (cinematicStateRef.current < 4) {
       cinematicIntroMusic.start(cinematicStateRef.current);
@@ -8100,6 +8112,22 @@ export default function App() {
           }}
           className="h-auto max-w-full max-h-full drop-shadow-2xl pointer-events-auto"
         />
+
+        {altCampPreview && mode === 'camp' && (
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-[#2A1B19] border-2 border-[#ded095] px-3 py-1.5">
+            <span className="text-[11px] font-black tracking-[0.18em] text-[#ded095]">SALT QUAY</span>
+            <button
+              type="button"
+              onClick={() => {
+                altCampPreviewRef.current = false;
+                setAltCampPreview(false);
+                gameAudio.playCrispClick();
+              }}
+              className="bg-[#ba7654] hover:bg-[#cb9f6b] text-[#3f363b] text-xs font-bold px-3 py-1 rounded">
+              Return to camp
+            </button>
+          </div>
+        )}
 
         {/* CRISP HIGH-RESOLUTION EMPEROR POST-FIGHT VERDICT DIALOGUE OVERLAY */}
         {judgmentState.active && judgmentState.phase === 'verdict' && (
@@ -13589,6 +13617,18 @@ export default function App() {
                 }}
                 className="bg-[#3f363b] hover:bg-[#574b50] text-[#88997a] text-xs font-bold px-3 py-1.5 rounded border border-[#7f644b]">
                 🌧 Toggle Rain
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  altCampPreviewRef.current = true;
+                  setAltCampPreview(true);
+                  setIsDebugMenuOpen(false);
+                  gameAudio.playCrispClick();
+                }}
+                className="bg-[#3f363b] hover:bg-[#574b50] text-[#ded095] text-xs font-bold px-3 py-1.5 rounded border border-[#ded095]">
+                View Salt Quay
               </button>
 
               <button
