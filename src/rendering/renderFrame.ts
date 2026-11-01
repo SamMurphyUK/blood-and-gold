@@ -4,6 +4,7 @@
 
 import {PALETTE} from '../../constants';
 import {drawArena, drawArenaOverlay} from './arena/drawArena';
+import {drawAltCamp, drawAltCampOverlay} from './camp/altCamp';
 import {drawCamp, drawCampOverlay} from './camp/drawCamp';
 import {renderPhase1, renderPhase2And3, renderPhase4, renderPhase5} from './cinematicIntro';
 import {getSafeNow} from './frameTime';
@@ -93,7 +94,11 @@ export function renderFrame(view: RenderView, displayCtx: CanvasRenderingContext
     return;
   }
 
-  if (mode === 'camp') {
+  const previewingAltCamp = mode === 'camp' && view.altCampPreviewRef.current;
+
+  if (previewingAltCamp) {
+    drawAltCamp(offCtx, view.animTimeRef.current || 0);
+  } else if (mode === 'camp') {
     drawCamp(view, offCtx);
   } else if (mode === 'podium') {
     drawPodium(view, offCtx);
@@ -101,8 +106,8 @@ export function renderFrame(view: RenderView, displayCtx: CanvasRenderingContext
     drawArena(view, offCtx);
   }
 
-  // Draw pixel particles (blood droplets & sparkles)
-  particlesRef.current.forEach((p) => {
+  // The live camp keeps simulating underneath the preview, so its particles stay off this frame.
+  if (!previewingAltCamp) particlesRef.current.forEach((p) => {
     offCtx.save();
     const alpha = Math.max(0, p.life / p.maxLife);
     offCtx.globalAlpha = alpha;
@@ -122,7 +127,9 @@ export function renderFrame(view: RenderView, displayCtx: CanvasRenderingContext
   // Renders overhead names, HP/Stamina bars, and status badges with 100% sharp
   // vector text, crisp antialiasing and zero blur!
   // ========================================================================
-  if (mode === 'camp') {
+  if (previewingAltCamp) {
+    drawAltCampOverlay(displayCtx, canvasWidth, canvasHeight, view.animTimeRef.current || 0);
+  } else if (mode === 'camp') {
     drawCampOverlay(view, displayCtx);
   } else if (mode === 'arena') {
     if (judgmentState.active) {
@@ -132,7 +139,7 @@ export function renderFrame(view: RenderView, displayCtx: CanvasRenderingContext
   }
 
   // Render Flying Gold Coin Particles on High-Res Display Canvas
-  if (flyingGoldCoinsRef.current.length > 0) {
+  if (!previewingAltCamp && flyingGoldCoinsRef.current.length > 0) {
     displayCtx.save();
     displayCtx.imageSmoothingEnabled = true;
     flyingGoldCoinsRef.current.forEach((coin) => {

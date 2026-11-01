@@ -78,6 +78,8 @@ export interface RenderView {
   readonly courierNpcRef: RefView<CourierNpcState>;
   readonly visitorWalkingNpcRef: RefView<VisitorWalkingNpcState | null>;
   readonly gladiatorsRef: RefView<Gladiator[]>;
+  /** Debug preview. When set, camp draws the alt-camp lineup instead of the live roster. */
+  readonly altCampPreviewRef: RefView<boolean>;
   readonly sparkleTimerRef: RefView<number>;
   readonly campWeatherRef: RefView<"clear" | "rain">;
   readonly dimAlphaRef: RefView<number>;
